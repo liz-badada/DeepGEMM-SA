@@ -180,7 +180,7 @@ def main() -> int:
         [
             sys.executable,
             "tests/test_mxfp4_mega_moe_sm90_correctness.py",
-            "--batches", "8", "32",
+            "--batches", "8", "32", "64", "128", "512",
             "--hidden", "4096",
             "--intermediate-hidden", "2048",
             "--num-experts", "256",
@@ -251,7 +251,12 @@ def main() -> int:
 
     gates = [
         _gate("dsv4_flash_structure", True, shape_artifact, "Exact H=4096/IH=2048/E=256/topk=6/world=8 denominator."),
-        _gate("mxfp4_correctness", correctness.returncode == 0, correctness_log, "Exact-dequantized MXFP4 correctness on M=8 and M=32."),
+        _gate(
+            "mxfp4_correctness",
+            correctness.returncode == 0,
+            correctness_log,
+            "Exact-dequantized MXFP4 correctness on M=8,32,64,128,512 topology representatives.",
+        ),
         _gate("paired_performance", performance_pass, perf_artifact, f"min={minimum:.6f}x geomean={geomean:.6f}x over {len(rows)}/11 rows."),
     ]
     comparable = correctness.returncode == 0 and complete

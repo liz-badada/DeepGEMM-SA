@@ -39,7 +39,7 @@ problem_shapes:
 correctness_reference:
   target: tests/test_mxfp4_mega_moe_sm90_correctness.py
   mode: exact_dequantized_mxfp4_reference
-  required_rows: [flash_m8, flash_m32]
+  required_rows: [flash_m8, flash_m32, flash_m64, flash_m128, flash_m512]
 
 tolerance:
   atol: 1.0
