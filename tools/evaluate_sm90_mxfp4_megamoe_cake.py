@@ -187,6 +187,65 @@ def _wait_for_exclusive_gpus(log: Path, world_size: int) -> None:
         time.sleep(30)
 
 
+def _bootstrap_deep_gemm_extension(log: Path) -> subprocess.CompletedProcess[str]:
+    """Build and import the candidate worktree's DeepGEMM extension.
+
+    CAKE evaluates a fresh Git worktree whose ignored ``deep_gemm._C`` binary
+    is intentionally absent.  Materialize the pinned header submodules and
+    build the extension in place before launching multi-rank tests so an
+    import/bootstrap failure cannot be mislabeled as kernel correctness.
+
+    :param log: Destination for dependency, build, and import diagnostics.
+    :type log: pathlib.Path
+    :return: Completed process whose return code is zero only after import.
+    :rtype: subprocess.CompletedProcess[str]
+    """
+    env = dict(os.environ)
+    env.setdefault("CUDA_HOME", "/usr/local/cuda-13.1")
+    env.setdefault("DG_FORCE_BUILD", "1")
+    env.setdefault("DG_USE_LOCAL_VERSION", "0")
+    env.setdefault("MAX_JOBS", "16")
+    commands = (
+        [
+            "git",
+            "submodule",
+            "update",
+            "--init",
+            "--depth",
+            "1",
+            "third-party/cutlass",
+            "third-party/fmt",
+        ],
+        [sys.executable, "setup.py", "build_ext", "--inplace"],
+        [
+            sys.executable,
+            "-c",
+            (
+                "import deep_gemm; "
+                "print(deep_gemm._C.__file__)"
+            ),
+        ],
+    )
+    output: list[str] = []
+    last = subprocess.CompletedProcess([], 0, "")
+    for command in commands:
+        output.append(f"$ {' '.join(command)}")
+        last = subprocess.run(
+            command,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=1200,
+        )
+        output.append(last.stdout)
+        if last.returncode != 0:
+            break
+    combined = "\n".join(output)
+    log.write_text(combined, encoding="utf-8")
+    return subprocess.CompletedProcess(last.args, last.returncode, combined)
+
+
 def main() -> int:
     """Evaluate one candidate on the exact DeepSeek-V4-Flash denominator.
 
@@ -243,23 +302,32 @@ def main() -> int:
     }
     shape_artifact.write_text(json.dumps(shape, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    extension_log = artifact_root / "extension-build.log"
+    extension = _bootstrap_deep_gemm_extension(extension_log)
     correctness_log = artifact_root / "correctness.log"
-    correctness = _run(
-        [
-            sys.executable,
-            "tests/test_mxfp4_mega_moe_sm90_correctness.py",
-            "--batches", "8", "32", "64", "128", "512",
-            "--hidden", "4096",
-            "--intermediate-hidden", "2048",
-            "--num-experts", "256",
-            "--num-topk", "6",
-            "--num-processes", str(world_size),
-            "--num-max-tokens-per-rank", "8192",
-            "--weight-scales", "0.05",
-            "--global-scale-modes", "none", "expert",
-        ],
-        correctness_log,
-    )
+    if extension.returncode == 0:
+        correctness = _run(
+            [
+                sys.executable,
+                "tests/test_mxfp4_mega_moe_sm90_correctness.py",
+                "--batches", "8", "32", "64", "128", "512",
+                "--hidden", "4096",
+                "--intermediate-hidden", "2048",
+                "--num-experts", "256",
+                "--num-topk", "6",
+                "--num-processes", str(world_size),
+                "--num-max-tokens-per-rank", "8192",
+                "--weight-scales", "0.05",
+                "--global-scale-modes", "none", "expert",
+            ],
+            correctness_log,
+        )
+    else:
+        correctness = subprocess.CompletedProcess([], 126, extension.stdout)
+        correctness_log.write_text(
+            "SKIPPED: deep_gemm._C bootstrap failed; see extension-build.log.\n",
+            encoding="utf-8",
+        )
 
     benchmark_log = artifact_root / "paired-benchmark.log"
     if correctness.returncode == 0:
