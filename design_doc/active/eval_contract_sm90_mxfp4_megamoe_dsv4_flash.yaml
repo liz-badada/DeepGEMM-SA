@@ -1,0 +1,91 @@
+---
+doc_type: eval-contract
+status: draft
+contract_version: v1-2026-09-13
+kernel: sm90_mxfp4_megamoe_dsv4_flash
+
+hardware:
+  gpu: NVIDIA H20
+  arch: sm_90a
+  minimum_arch: sm_90a
+  world_size: 8
+
+target_semantics:
+  operation: fp8_activation_mxfp4_weight_megamoe
+  model: deepseek-v4-flash-mxfp4
+  model_shape:
+    hidden: 4096
+    intermediate_hidden: 2048
+    num_experts: 256
+    num_topk: 6
+    num_ranks: 8
+  activation: swiglu
+  activation_clamp: 10.0
+  fast_math: true
+
+problem_shapes:
+  - {label: flash_m8, params: {M: 8}}
+  - {label: flash_m16, params: {M: 16}}
+  - {label: flash_m32, params: {M: 32}}
+  - {label: flash_m64, params: {M: 64}}
+  - {label: flash_m128, params: {M: 128}}
+  - {label: flash_m256, params: {M: 256}}
+  - {label: flash_m512, params: {M: 512}}
+  - {label: flash_m1024, params: {M: 1024}}
+  - {label: flash_m2048, params: {M: 2048}}
+  - {label: flash_m4096, params: {M: 4096}}
+  - {label: flash_m8192, params: {M: 8192}}
+
+correctness_reference:
+  target: tests/test_mxfp4_mega_moe_sm90_correctness.py
+  mode: exact_dequantized_mxfp4_reference
+  required_rows: [flash_m8, flash_m32]
+
+tolerance:
+  atol: 1.0
+  rtol: 0.1
+
+metrics:
+  primary: kernel_ms
+  direction: minimize
+
+bench:
+  harness: tests/bench_mega_moe_formats_sm90.py
+  baseline: fp8_pr383_path
+  candidate: mxfp4
+  timing: kineto_cupti_cuda_kernel_time
+  cold_l2: true
+  pairing: same_process_same_inputs_interleaved_per_shape
+  repetitions: 3
+  launches_per_repetition: 20
+  acceptance:
+    every_row_speedup_min: 1.05
+    geometric_mean_speedup_min: 1.10
+
+source_policy:
+  allowlist_only: false
+  ledger:
+    - id: current_mxfp4_kernel
+      path: deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl
+      policy: mutable_candidate
+    - id: current_mxfp4_heuristic
+      path: csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp
+      policy: mutable_candidate
+    - id: inherited_nvfp4_reference
+      path: deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl
+      revision: aichen/megamoe_nvfp4_dev_m
+      policy: allowed_structural_history
+    - id: pr383_fp8_baseline
+      path: deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh
+      policy: benchmark_only
+
+evolution_process:
+  workflow_mode: shape_specific_evolution
+  progressive_verification:
+    decomposition_level: key_blocks
+    block_verification: changed_required_blocks
+    performance_ranking: dag_coverage_then_perf
+
+halt:
+  plateau_rounds: 3
+  plateau_threshold_pct: 1.0
