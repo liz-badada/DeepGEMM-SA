@@ -82,6 +82,40 @@ instructions while removing one `ELECT` and 21--27 `SYNCS.EXCH.64`
 instructions from the static body. Dynamic latency remains an empirical
 question because the lane-distributed path executes in parallel.
 
+### MXFP4 M=512 packed-F16 candidate comparison
+
+CAKE wave 1 materialized a complete C121-style packed-F16 port for the exact
+Flash `M=512+` tier (`EPW=32`, `BM=128`, `BN=128`, six stages, Mode2, no
+swap-AB). The port includes the local F16 WGMMA wrapper, 32 packed accumulator
+registers, half2 scale promotion for both L1 and L2, and conversion to the
+unchanged float epilogue. It preserves the interleaved scheduler and existing
+barrier topology.
+
+Both arms were compiled from the same probe with CUDA 13.1 for `sm_90a` and
+the exact CUTLASS gitlink commit `f3fde583`. Static disassembly shows that the
+change is a focused arithmetic substitution rather than a broader schedule
+rewrite.
+
+| Property | Baseline F32 | Packed-F16 candidate | Delta |
+| --- | ---: | ---: | ---: |
+| SASS listing lines | 8,146 | 8,156 | +10 |
+| `QGMMA.64X128X32.F32.E4M3.E4M3` | 8 | 0 | -8 |
+| `QGMMA.64X128X32.F16.E4M3.E4M3` | 0 | 8 | +8 |
+| `FFMA` | 192 | 0 | -192 |
+| `HFMA2` | 0 | 96 | +96 |
+| `F2F` | 113 | 160 | +47 |
+| `SYNCS` | 245 | 245 | 0 |
+| `ATOMG` | 15 | 15 | 0 |
+| Registers | 168 | 168 | 0 |
+| Stack / local / spills | 0 | 0 | 0 |
+
+The two scalar promotions are combined into one packed `HFMA2`, while the
+float epilogue boundary adds 47 conversion instructions. The resulting SASS
+grows by only ten listing lines and leaves synchronization, atomic scheduling,
+register count, and occupancy-relevant local state unchanged. This satisfies
+the campaign's pre-timing signature exactly; live eight-rank H20 correctness
+and paired latency remain the promotion authority.
+
 ## 🔍 Aichen NVFP4 transfer points
 
 The checked-out MXFP4 body and Aichen NVFP4 body use the same high-level SM90
