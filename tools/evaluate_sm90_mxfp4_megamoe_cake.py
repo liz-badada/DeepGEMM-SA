@@ -10,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -34,6 +35,15 @@ _ROW = re.compile(
 
 
 def _run(command: list[str], log: Path) -> subprocess.CompletedProcess[str]:
+    """Run one evaluator command and persist its combined output.
+
+    :param command: Command and arguments to execute.
+    :type command: list[str]
+    :param log: Destination for combined standard output and error.
+    :type log: pathlib.Path
+    :return: Completed subprocess result.
+    :rtype: subprocess.CompletedProcess[str]
+    """
     env = dict(os.environ)
     env.setdefault("DG_BENCH_FLUSH_L2_BYTES", str(8_000_000_000))
     proc = subprocess.run(
@@ -49,10 +59,30 @@ def _run(command: list[str], log: Path) -> subprocess.CompletedProcess[str]:
 
 
 def _sha256(path: Path) -> str:
+    """Return the SHA-256 digest of an artifact.
+
+    :param path: Artifact to hash.
+    :type path: pathlib.Path
+    :return: Lowercase hexadecimal digest.
+    :rtype: str
+    """
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _gate(name: str, passed: bool, artifact: Path, summary: str) -> dict[str, object]:
+    """Build one evidence-backed evaluation gate.
+
+    :param name: Stable gate name.
+    :type name: str
+    :param passed: Whether the gate passed.
+    :type passed: bool
+    :param artifact: Evidence artifact for the gate.
+    :type artifact: pathlib.Path
+    :param summary: Human-readable gate summary.
+    :type summary: str
+    :return: Serialized gate record.
+    :rtype: dict[str, object]
+    """
     return {
         "name": name,
         "status": "pass" if passed else "fail",
@@ -62,7 +92,62 @@ def _gate(name: str, passed: bool, artifact: Path, summary: str) -> dict[str, ob
     }
 
 
+def _wait_for_exclusive_gpus(log: Path) -> None:
+    """Wait until all eight local H20 GPUs are free of material allocations.
+
+    The direct-connect H20 hosts are shared with long-running inference jobs,
+    outside CAKE's Slurm lease accounting. Refuse to begin an eight-rank run
+    until every physical GPU is present and using at most the configured idle
+    memory allowance.
+
+    :param log: Destination for timestamped GPU availability observations.
+    :type log: pathlib.Path
+    :raises TimeoutError: If eight idle GPUs do not become available in time.
+    """
+    timeout_seconds = int(os.environ.get("DG_EVALUATOR_GPU_WAIT_SECONDS", "5400"))
+    idle_memory_mib = int(os.environ.get("DG_EVALUATOR_IDLE_MEMORY_MIB", "1024"))
+    deadline = time.monotonic() + timeout_seconds
+    observations: list[str] = []
+    while True:
+        observed_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        probe = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=30,
+        )
+        rows: list[tuple[int, int]] = []
+        if probe.returncode == 0:
+            for line in probe.stdout.splitlines():
+                fields = [field.strip() for field in line.split(",")]
+                if len(fields) == 2:
+                    try:
+                        rows.append((int(fields[0]), int(fields[1])))
+                    except ValueError:
+                        rows = []
+                        break
+        ready = len(rows) == 8 and [index for index, _ in rows] == list(range(8))
+        ready = ready and all(used <= idle_memory_mib for _, used in rows)
+        observations.append(f"{observed_at} ready={ready} rows={rows!r} rc={probe.returncode}")
+        log.write_text("\n".join(observations) + "\n", encoding="utf-8")
+        if ready:
+            return
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"eight idle H20 GPUs unavailable after {timeout_seconds} seconds")
+        time.sleep(30)
+
+
 def main() -> int:
+    """Evaluate one candidate on the exact DeepSeek-V4-Flash denominator.
+
+    :return: Zero after writing a schema-valid CAKE evaluation document.
+    :rtype: int
+    """
     input_path = Path(os.environ["LOOM_EVALUATION_INPUT"])
     output_path = Path(os.environ["LOOM_EVALUATION_OUTPUT"])
     artifact_root = Path(os.environ["LOOM_EVALUATION_ARTIFACT_ROOT"])
@@ -72,6 +157,8 @@ def main() -> int:
     lane = request["lane"]
     attempt = request["attempt"]
     candidate = request["candidate"]
+
+    _wait_for_exclusive_gpus(artifact_root / "gpu-availability.log")
 
     shape_artifact = artifact_root / "dsv4-flash-shape.json"
     shape = {
