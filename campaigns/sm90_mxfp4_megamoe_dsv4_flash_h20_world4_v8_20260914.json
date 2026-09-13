@@ -4,7 +4,7 @@
   "campaign_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-world4-v8-20260914",
   "kernel": "sm90_mxfp4_megamoe_dsv4_flash_world4",
   "objective": "Systematically optimize the existing SM90 FP8-activation x OCP-MXFP4-weight persistent MegaMoE kernel on exactly 4x NVIDIA H20 for the exact DeepSeek-V4-Flash model shape. The verified live starting point passes exact correctness but is slower than the same-process live FP8 baseline at every M: minimum speedup 0.433963x and geometric mean 0.653225x over M=8..8192, with the worst discontinuity at M=512 (895.7us FP8 versus 2064.0us MXFP4). First isolate and repair the M=512 tuning transition, while separately searching equivalence-tested Humming-style DP4A/PRMT E2M1+E8M0 register decode and small-M BN512/BK64 scheduling mechanisms informed by generated SASS. Achieve every-row speedup at least 1.05x and geometric-mean speedup at least 1.10x versus live FP8 without weakening the real four-rank distributed workload, and preserve the real eight-rank path for its separate campaign.",
-  "base_commit": "b06c7ff20de05f63e733bbd84141b330f9f759a5",
+  "base_commit": "252a290c7e25777b8333b5628326f784916ff461",
   "scope_paths": [
     "csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp",
     "csrc/jit_kernels/impls/sm90_mxfp4_mega_moe_h200_fused.hpp",
