@@ -102,8 +102,18 @@ mxfp4_h20_src='#define DG_NVLINK_BARRIER_TRAP_ONLY_TIMEOUT 1
 using namespace deep_gemm;
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&sm90_mxfp4_mega_moe_h200_fused_impl<
-        78, 2048, 48, 128, 128, 8192, 8192, 6, 10.0f, true,
-        false, false, true, false>);
+        78, 8, 4096, 2048, 256, 6, 8192, 16, 8, 256,
+        399360, 6389760, 4, 10.0f, true, true, true, true, true>);
+    (void)ptr;
+}'
+
+mxfp4_h20_world4_src='#define DG_NVLINK_BARRIER_TRAP_ONLY_TIMEOUT 1
+#include <deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused.cuh>
+using namespace deep_gemm;
+static void __instantiate_kernel() {
+    auto ptr = reinterpret_cast<void*>(&sm90_mxfp4_mega_moe_h200_fused_impl<
+        78, 4, 4096, 2048, 256, 6, 8192, 16, 8, 256,
+        399360, 6389760, 4, 10.0f, true, true, true, true, true>);
     (void)ptr;
 }'
 
@@ -112,13 +122,14 @@ mxfp4_h200_src='#define DG_NVLINK_BARRIER_TRAP_ONLY_TIMEOUT 1
 using namespace deep_gemm;
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&sm90_mxfp4_mega_moe_h200_fused_impl<
-        132, 2048, 48, 128, 128, 8192, 8192, 6, 10.0f, true,
-        false, false, true, false>);
+        132, 8, 4096, 2048, 256, 6, 8192, 16, 8, 256,
+        399360, 6389760, 4, 10.0f, true, true, true, true, true>);
     (void)ptr;
 }'
 
 # kNumSMs is now a template parameter, so both SM counts must build.
 instantiate 'sm90_mxfp4 (78 SM, H20)'    90a  wgmma     "$mxfp4_h20_src"
+instantiate 'sm90_mxfp4 (4 ranks, H20)'  90a  wgmma     "$mxfp4_h20_world4_src"
 instantiate 'sm90_mxfp4 (132 SM, H200)'  90a  wgmma     "$mxfp4_h200_src"
 instantiate 'sm90_mxfp4 (78 SM, H20)'    120a gated-out "$mxfp4_h20_src"
 

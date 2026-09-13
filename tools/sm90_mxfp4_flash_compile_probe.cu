@@ -4,6 +4,9 @@
 #ifndef DG_PROBE_EPW
 #define DG_PROBE_EPW 16
 #endif
+#ifndef DG_PROBE_NUM_RANKS
+#define DG_PROBE_NUM_RANKS 8
+#endif
 #ifndef DG_PROBE_BLOCK_M
 #define DG_PROBE_BLOCK_M 8
 #endif
@@ -29,6 +32,7 @@ static void instantiate_flash_kernel() {
     auto ptr = reinterpret_cast<void*>(
         &sm90_mxfp4_mega_moe_h200_fused_impl<
             /* kNumSMs */ 78,
+            /* kNumRanks */ DG_PROBE_NUM_RANKS,
             /* kHidden */ 4096,
             /* kIntermediateHidden */ 2048,
             /* kNumExperts */ 256,

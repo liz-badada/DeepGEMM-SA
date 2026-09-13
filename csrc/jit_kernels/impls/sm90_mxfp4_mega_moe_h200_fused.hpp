@@ -21,6 +21,7 @@ public:
     struct Args {
         // Shape is part of the kernel signature now (see the .cuh template
         // parameter list), so it must be part of the JIT cache key too.
+        int num_ranks;
         int hidden;
         int intermediate_hidden;
         int num_experts;
@@ -72,6 +73,7 @@ using namespace deep_gemm;
 static void __instantiate_kernel() {{
     auto ptr = reinterpret_cast<void*>(&{}<
         /* kNumSMs */ {},
+        /* kNumRanks */ {},
         /* kHidden */ {},
         /* kIntermediateHidden */ {},
         /* kNumExperts */ {},
@@ -92,6 +94,7 @@ static void __instantiate_kernel() {{
             kernel_header,
             "sm90_mxfp4_mega_moe_h200_fused_impl",
             args.launch_args.grid_dim.first,
+            args.num_ranks,
             args.hidden,
             args.intermediate_hidden,
             args.num_experts,
@@ -206,6 +209,7 @@ static void sm90_mxfp4_h200_fused_mega_moe(
         l2_global_scales->data_ptr<float>() : nullptr;
 
     const SM90MXFP4H200FusedRuntime::Args args = {
+        .num_ranks = num_ranks,
         .hidden = hidden,
         .intermediate_hidden = intermediate_hidden,
         .num_experts = num_experts,

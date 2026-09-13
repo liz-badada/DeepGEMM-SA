@@ -45,8 +45,10 @@ def _run(command: list[str], log: Path) -> subprocess.CompletedProcess[str]:
     :rtype: subprocess.CompletedProcess[str]
     """
     env = dict(os.environ)
-    env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
-    env["NVIDIA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+    visible_devices = env.get("CUDA_VISIBLE_DEVICES")
+    if not visible_devices:
+        raise RuntimeError("CUDA_VISIBLE_DEVICES must bind the allocated MegaMoE ranks")
+    env["NVIDIA_VISIBLE_DEVICES"] = visible_devices
     env.setdefault("DG_BENCH_FLUSH_L2_BYTES", str(8_000_000_000))
     proc = subprocess.run(
         command,
@@ -94,18 +96,44 @@ def _gate(name: str, passed: bool, artifact: Path, summary: str) -> dict[str, ob
     }
 
 
-def _wait_for_exclusive_gpus(log: Path) -> None:
-    """Wait until all eight local H20 GPUs are free of material allocations.
+def _visible_gpu_indices(world_size: int) -> tuple[int, ...]:
+    """Return the physical GPU indices bound to this multi-rank evaluation.
+
+    :param world_size: Required number of local MegaMoE ranks.
+    :type world_size: int
+    :return: Ordered physical GPU indices from ``CUDA_VISIBLE_DEVICES``.
+    :rtype: tuple[int, ...]
+    :raises RuntimeError: If visibility is absent, non-numeric, or mismatched.
+    """
+    raw = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    try:
+        indices = tuple(int(item.strip()) for item in raw.split(",") if item.strip())
+    except ValueError as error:
+        raise RuntimeError(
+            "the direct-connect evaluator requires numeric CUDA_VISIBLE_DEVICES"
+        ) from error
+    if len(indices) != world_size or len(set(indices)) != world_size:
+        raise RuntimeError(
+            f"world_size={world_size} requires {world_size} unique visible GPUs, got {raw!r}"
+        )
+    return indices
+
+
+def _wait_for_exclusive_gpus(log: Path, world_size: int) -> None:
+    """Wait until every GPU allocated to the multi-rank run is idle.
 
     The direct-connect H20 hosts are shared with long-running inference jobs,
-    outside CAKE's Slurm lease accounting. Refuse to begin an eight-rank run
-    until every physical GPU is present and using at most the configured idle
-    memory allowance.
+    outside CAKE's Slurm lease accounting. Refuse to begin a four- or
+    eight-rank run until every selected physical GPU is present and using at
+    most the configured idle memory allowance.
 
     :param log: Destination for timestamped GPU availability observations.
     :type log: pathlib.Path
-    :raises TimeoutError: If eight idle GPUs do not become available in time.
+    :param world_size: Number of selected local ranks.
+    :type world_size: int
+    :raises TimeoutError: If the allocated GPUs do not become idle in time.
     """
+    selected_indices = _visible_gpu_indices(world_size)
     timeout_seconds = int(os.environ.get("DG_EVALUATOR_GPU_WAIT_SECONDS", "5400"))
     idle_memory_mib = int(os.environ.get("DG_EVALUATOR_IDLE_MEMORY_MIB", "1024"))
     deadline = time.monotonic() + timeout_seconds
@@ -133,14 +161,25 @@ def _wait_for_exclusive_gpus(log: Path) -> None:
                     except ValueError:
                         rows = []
                         break
-        ready = len(rows) == 8 and [index for index, _ in rows] == list(range(8))
-        ready = ready and all(used <= idle_memory_mib for _, used in rows)
-        observations.append(f"{observed_at} ready={ready} rows={rows!r} rc={probe.returncode}")
+        memory_by_index = dict(rows)
+        selected_rows = tuple(
+            (index, memory_by_index.get(index)) for index in selected_indices
+        )
+        ready = all(
+            used is not None and used <= idle_memory_mib
+            for _, used in selected_rows
+        )
+        observations.append(
+            f"{observed_at} ready={ready} selected={selected_rows!r} "
+            f"all_rows={rows!r} rc={probe.returncode}"
+        )
         log.write_text("\n".join(observations) + "\n", encoding="utf-8")
         if ready:
             return
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"eight idle H20 GPUs unavailable after {timeout_seconds} seconds")
+            raise TimeoutError(
+                f"{world_size} allocated H20 GPUs unavailable after {timeout_seconds} seconds"
+            )
         time.sleep(30)
 
 
@@ -181,8 +220,11 @@ def main() -> int:
     lane = request["lane"]
     attempt = request["attempt"]
     candidate = request["candidate"]
+    world_size = int(os.environ.get("DG_WORLD_SIZE", "8"))
+    if world_size not in (4, 8):
+        raise RuntimeError(f"MegaMoE evaluator supports world_size 4 or 8, got {world_size}")
 
-    _wait_for_exclusive_gpus(artifact_root / "gpu-availability.log")
+    _wait_for_exclusive_gpus(artifact_root / "gpu-availability.log", world_size)
 
     shape_artifact = artifact_root / "dsv4-flash-shape.json"
     shape = {
@@ -191,9 +233,9 @@ def main() -> int:
         "intermediate_hidden": 2048,
         "num_experts": 256,
         "num_topk": 6,
-        "num_ranks": 8,
+        "num_ranks": world_size,
         "batches": list(FLASH_BATCHES),
-        "pr383_us": PR383_US,
+        "pr383_us": PR383_US if world_size == 8 else None,
     }
     shape_artifact.write_text(json.dumps(shape, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -207,7 +249,7 @@ def main() -> int:
             "--intermediate-hidden", "2048",
             "--num-experts", "256",
             "--num-topk", "6",
-            "--num-processes", "8",
+            "--num-processes", str(world_size),
             "--num-max-tokens-per-rank", "8192",
             "--weight-scales", "0.05",
             "--global-scale-modes", "none", "expert",
@@ -217,12 +259,14 @@ def main() -> int:
 
     benchmark_log = artifact_root / "paired-benchmark.log"
     if correctness.returncode == 0:
-        _wait_for_exclusive_gpus(artifact_root / "gpu-availability-pre-performance.log")
+        _wait_for_exclusive_gpus(
+            artifact_root / "gpu-availability-pre-performance.log", world_size
+        )
         benchmark = _run(
             [
                 sys.executable,
                 "tests/bench_mega_moe_formats_sm90.py",
-                "--num-processes", "8",
+                "--num-processes", str(world_size),
                 "--arms", "fp8", "mxfp4",
                 "--baseline", "fp8",
                 "--batches", *(str(m) for m in FLASH_BATCHES),
@@ -244,7 +288,7 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    rows: list[dict[str, float | int]] = []
+    rows: list[dict[str, float | int | None]] = []
     if benchmark.returncode == 0:
         for match in _ROW.finditer(benchmark.stdout):
             m = int(match.group("m"))
@@ -255,7 +299,9 @@ def main() -> int:
                 "fp8_us": fp8_us,
                 "mxfp4_us": mxfp4_us,
                 "speedup_vs_live_fp8": fp8_us / mxfp4_us,
-                "speedup_vs_pr383_published": PR383_US[m] / mxfp4_us,
+                "speedup_vs_pr383_published": (
+                    PR383_US[m] / mxfp4_us if world_size == 8 else None
+                ),
             })
     rows.sort(key=lambda row: int(row["m"]))
     complete = [int(row["m"]) for row in rows] == list(FLASH_BATCHES)
@@ -268,6 +314,7 @@ def main() -> int:
     perf_artifact = artifact_root / "paired-performance.json"
     perf_artifact.write_text(
         json.dumps({
+            "world_size": world_size,
             "rows": rows,
             "complete": complete,
             "minimum_speedup_vs_live_fp8": minimum,
@@ -280,7 +327,12 @@ def main() -> int:
     )
 
     gates = [
-        _gate("dsv4_flash_structure", True, shape_artifact, "Exact H=4096/IH=2048/E=256/topk=6/world=8 denominator."),
+        _gate(
+            "dsv4_flash_structure",
+            True,
+            shape_artifact,
+            f"Exact H=4096/IH=2048/E=256/topk=6/world={world_size} denominator.",
+        ),
         _gate(
             "mxfp4_correctness",
             correctness.returncode == 0,
@@ -290,6 +342,11 @@ def main() -> int:
         _gate("paired_performance", performance_pass, perf_artifact, f"min={minimum:.6f}x geomean={geomean:.6f}x over {len(rows)}/11 rows."),
     ]
     comparable = correctness.returncode == 0 and complete
+    evaluator_id = (
+        "sm90-mxfp4-megamoe-dsv4-flash-h20-v1"
+        if world_size == 8
+        else "sm90-mxfp4-megamoe-dsv4-flash-h20-world4-v1"
+    )
     document = {
         "schema_version": 20,
         "kind": "loom_kernel_candidate_evaluation",
@@ -298,7 +355,7 @@ def main() -> int:
         "lane_id": attempt["attempt_id"],
         "candidate_id": candidate["candidate_id"],
         "commit": candidate["commit"],
-        "evaluator_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-v1",
+        "evaluator_id": evaluator_id,
         "gates": gates,
         "metric": {
             "name": "minimum_speedup_vs_baseline",
@@ -308,7 +365,11 @@ def main() -> int:
             "artifact": "evidence/paired-performance.json",
             "artifact_sha256": _sha256(perf_artifact),
         },
-        "summary": f"DeepSeek-V4-Flash H20: correctness_rc={correctness.returncode}, min={minimum:.6f}x, geomean={geomean:.6f}x.",
+        "summary": (
+            f"DeepSeek-V4-Flash H20 world={world_size}: "
+            f"correctness_rc={correctness.returncode}, min={minimum:.6f}x, "
+            f"geomean={geomean:.6f}x."
+        ),
         "dispatcher_evidence": None,
         "dispatcher_target_evidence": None,
         "shape_performance_evidence": None,
