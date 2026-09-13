@@ -25,10 +25,20 @@ Humming has the closest arithmetic body. The controlled compile request used
 FP8 E4M3 activations, E2M1 weights, fused E8M0 group scales with group width
 32, `N=K=4096`, and 256 indexed experts. Upstream nevertheless leaves
 `Sm90H20Heuristics.b4_allowed_dtypes` empty. Temporarily enabling E2M1 allowed
-JIT compilation, but its launcher rejected the three-dimensional indexed
-activation tensor where the generated path expected two dimensions. The
-Humming cubin is therefore valid static code-generation evidence, not a
-correctness or latency claim for our routed eight-rank operation.
+JIT compilation. Its benchmark helper first added a stale dimension to the
+already two-dimensional dynamic-token scale, and its SM90 checked tuning then
+forced scale-major `(1, M)` storage even though the public indexed compute
+configuration remained row-major. An evidence-only wrapper corrected those
+two layout mismatches without changing the quantized values or kernel.
+
+The corrected single-GPU H20 probe executed the indexed kernel at `M=8` and
+reported 0.1568 ms for `N=K=4096`, 256 experts, and `topk=6`. This establishes
+that the selected cubin is dynamically executable on H20. It is not a
+correctness result and is not comparable with the eight-rank persistent
+DeepGEMM contract, so it remains mechanism evidence rather than a campaign
+latency denominator. Humming's generic result saver also attempted an
+unrelated `m256n64k32` synthetic WGMMA TOPS kernel that SM90 rejects; the
+evidence wrapper deliberately reports only the measured GEMM row.
 
 Current vLLM Marlin has genuine E2M1 plus E8M0/group32 instantiations. Its
 public MXFP4 linear wrapper is weight-only, however, and its generator omits
@@ -144,6 +154,8 @@ The H20 workspace contains reproducible cubins, SASS, resources, compiler
 signatures, and source snapshots under:
 
 - `evidence/humming-sm90/selected-m8` and `lowreg-bk256`.
+- `evidence/humming-sm90/probe_humming_h20.py` and `probe-m8-run.log` for the
+  evidence-only single-GPU H20 compatibility run.
 - `evidence/deepgemm-sm90-current-m8`.
 - `evidence/vllm-marlin-sm90`, including BF16 MXFP4 and forced FP8/MXFP4.
 - `evidence/original-marlin-sm90/fp16-int4-m16-group128.sass`.
