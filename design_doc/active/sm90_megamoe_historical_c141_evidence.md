@@ -74,6 +74,39 @@ stack/local memory. The current specialization has 6,295 static instructions,
 the highest-confidence large-M transfer. It must remain topology-gated rather
 than M-gated and must pass the MXFP4 numerical contract before timing.
 
+The authoritative C121 inputs are retained at:
+
+- Seed solution:
+  `packages/ep8/c121-splitm-f16-accum-dev1/seed/seed_solution.json`
+- Measured candidate:
+  `candidates/ep8/c121-splitm-f16-accum-3083055/candidate_solution.json`
+- Promotion candidate and receipts:
+  `candidates/ep8/c121-splitm-f16-accum-3083214/`
+
+The serialized seed-to-candidate source diff adds only
+`kSplitMDecodedWeightReuse` to the packed-F16 eligibility predicate. That
+one-line delta is not directly applicable to the current MXFP4 tree: the C121
+seed already contained `FP8MMAF16M64N128K32`, packed `uint32_t` accumulators,
+`__half2` scaled promotion, F16 L1/L2 mainloop branches, and final conversion
+to float for the unchanged epilogue. The current MXFP4 implementation contains
+none of that infrastructure. A faithful CAKE port must therefore carry all of
+the following as one coherent topology-gated change:
+
+1. Add the exact `m64n128k32.f16.e4m3.e4m3` wrapper locally in the MXFP4
+   kernel header and include `cuda_fp16.h`; do not alter the shared MMA ABI.
+2. Enable it only when `kSplitMDecodedWeightReuse` is true and swap-AB is
+   inactive, with static M/N/K shape assertions against the existing F32
+   selector.
+3. Accumulate WGMMA output in 32 packed `uint32_t` registers, apply activation
+   scales through `__half2`/`__hfma2`, and retain the existing two per-K64 L2
+   scale groups.
+4. Convert the packed final accumulator to the existing float layout before
+   the current SwiGLU/scatter epilogues, leaving all routing, barriers, decoded
+   weight sharing, and public formats unchanged.
+5. Prove the generated M512 cubin actually contains eight F16 QGMMAs and no
+   F32 QGMMA, with 168 registers and zero stack/local/spill, before consuming
+   the eight-GPU correctness/performance gate.
+
 ### Other evidence
 
 1. C141 uses a private sign-swizzled fused-weight cache while preserving the
