@@ -263,6 +263,14 @@ def main() -> int:
             f"evaluation artifacts must stay under {workspace_root}, got {artifact_root}"
         ) from error
     artifact_root.mkdir(parents=True, exist_ok=True)
+    # Torch SymmetricMemory creates AF_UNIX sockets below TMPDIR.  The CAKE
+    # run/attempt paths are long enough that appending its socket name exceeds
+    # sockaddr_un.sun_path and bind() fails with EINVAL before kernel launch.
+    # Keep the temp root short while still honoring the workspace-only policy.
+    runtime_tmp_root = workspace_root / "t"
+    runtime_tmp_root.mkdir(parents=True, exist_ok=True)
+    for name in ("TMPDIR", "TMP", "TEMP", "TEMPDIR"):
+        os.environ[name] = str(runtime_tmp_root)
     jit_cache_root = Path(
         os.environ.get("DG_JIT_CACHE_DIR", str(workspace_root / "cache" / "deep-gemm-jit"))
     ).resolve()
