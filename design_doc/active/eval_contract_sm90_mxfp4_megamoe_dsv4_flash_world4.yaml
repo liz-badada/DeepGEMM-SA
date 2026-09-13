@@ -46,8 +46,8 @@ tolerance:
   rtol: 0.1
 
 metrics:
-  primary: minimum_speedup_vs_baseline
-  direction: maximize
+  primary: kernel_ms
+  direction: minimize
 
 bench:
   harness: tests/bench_mega_moe_formats_sm90.py
