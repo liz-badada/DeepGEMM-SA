@@ -15,7 +15,6 @@ from pathlib import Path
 
 
 FLASH_BATCHES = (8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
-H20_WORKSPACE_ROOT = Path("/lustre/raplab/client/jinyanc/workspace/jinyanc")
 PR383_US = {
     8: 273.1,
     16: 304.4,
@@ -153,9 +152,7 @@ def main() -> int:
     """
     input_path = Path(os.environ["LOOM_EVALUATION_INPUT"])
     output_path = Path(os.environ["LOOM_EVALUATION_OUTPUT"])
-    workspace_root = Path(
-        os.environ.get("DG_H20_WORKSPACE_ROOT", str(H20_WORKSPACE_ROOT))
-    ).resolve()
+    workspace_root = Path(os.environ["DG_H20_WORKSPACE_ROOT"]).resolve()
     artifact_root = Path(os.environ["LOOM_EVALUATION_ARTIFACT_ROOT"]).resolve()
     try:
         artifact_root.relative_to(workspace_root)

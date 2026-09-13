@@ -22,6 +22,7 @@
     "Before timing the packed-F16 candidate, prove the exact M512 specialization emits eight QGMMA.64x128x32.F16.E4M3.E4M3 instructions, no F32 QGMMA, 168 registers, and zero stack/local/spill. Reject a candidate that merely compiles without satisfying this SASS signature.",
     "Preserve the current interleaved scheduler in the packed-F16 lane. The retained H200 A/B evidence showed interleaving improved M16 and M32, so a static-scheduler reversal requires separate live H20 evidence and must not be combined with the F16 change.",
     "Before each structural mutation inspect generated SASS/resource usage and record the hypothesis; use NCU after latency plateaus to distinguish WGMMA, TMA, decode, barrier, register, and occupancy limits.",
+    "Never write evaluation data, JIT caches, builds, or logs under home on the H20 hosts. For 10.6.131.5 and 10.6.131.6 use /lustre/raplab/client/jinyanc/workspace/jinyanc; for 10.6.131.24 and 10.6.131.25 use /raid/sharedspace/jinyanc.",
     "Commit each correct measured improvement before starting the next risky experiment and keep changes within scope_paths."
   ],
   "required_gates": [
