@@ -90,7 +90,11 @@ def _gate(name: str, passed: bool, artifact: Path, summary: str) -> dict[str, ob
     return {
         "name": name,
         "status": "pass" if passed else "fail",
-        "artifact": f"evidence/{artifact.name}",
+        # Paths in typed evaluation documents are relative to
+        # LOOM_EVALUATION_ARTIFACT_ROOT itself. Prefixing this with
+        # "evidence/" makes the round harness look for a directory that the
+        # evaluator never creates and prevents it from sealing a receipt.
+        "artifact": artifact.name,
         "artifact_sha256": _sha256(artifact),
         "summary": summary,
     }
@@ -362,7 +366,7 @@ def main() -> int:
             "value": minimum,
             "unit": "ratio",
             "comparable": comparable,
-            "artifact": "evidence/paired-performance.json",
+            "artifact": perf_artifact.name,
             "artifact_sha256": _sha256(perf_artifact),
         },
         "summary": (
