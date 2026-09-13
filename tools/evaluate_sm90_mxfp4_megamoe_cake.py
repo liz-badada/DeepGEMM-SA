@@ -15,6 +15,7 @@ from pathlib import Path
 
 
 FLASH_BATCHES = (8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
+H20_WORKSPACE_ROOT = Path("/lustre/raplab/client/jinyanc/workspace/jinyanc")
 PR383_US = {
     8: 273.1,
     16: 304.4,
@@ -152,15 +153,32 @@ def main() -> int:
     """
     input_path = Path(os.environ["LOOM_EVALUATION_INPUT"])
     output_path = Path(os.environ["LOOM_EVALUATION_OUTPUT"])
-    artifact_root = Path(os.environ["LOOM_EVALUATION_ARTIFACT_ROOT"])
+    workspace_root = Path(
+        os.environ.get("DG_H20_WORKSPACE_ROOT", str(H20_WORKSPACE_ROOT))
+    ).resolve()
+    artifact_root = Path(os.environ["LOOM_EVALUATION_ARTIFACT_ROOT"]).resolve()
+    try:
+        artifact_root.relative_to(workspace_root)
+    except ValueError as error:
+        raise RuntimeError(
+            f"evaluation artifacts must stay under {workspace_root}, got {artifact_root}"
+        ) from error
     artifact_root.mkdir(parents=True, exist_ok=True)
     jit_cache_root = Path(
-        os.environ.setdefault("DG_JIT_CACHE_DIR", str(artifact_root / "deep-gemm-jit"))
-    )
+        os.environ.get("DG_JIT_CACHE_DIR", str(workspace_root / "cache" / "deep-gemm-jit"))
+    ).resolve()
+    try:
+        jit_cache_root.relative_to(workspace_root)
+    except ValueError as error:
+        raise RuntimeError(
+            f"DeepGEMM JIT cache must stay under {workspace_root}, got {jit_cache_root}"
+        ) from error
+    os.environ["DG_JIT_CACHE_DIR"] = str(jit_cache_root)
     # DeepGEMM's JIT constructor lazily creates this directory in every rank.
     # Create it once here to avoid an EEXIST race in make_dirs(), and keep the
     # cache off quota-constrained $HOME on the direct-connect H20 hosts.
     (jit_cache_root / "tmp").mkdir(parents=True, exist_ok=True)
+    (jit_cache_root / "cache").mkdir(parents=True, exist_ok=True)
     request = json.loads(input_path.read_text(encoding="utf-8"))
     campaign = request["campaign"]
     lane = request["lane"]
