@@ -52,6 +52,30 @@ M=256 do not meet this campaign's stricter per-row 1.05x floor.
 
 ## Transferable mechanisms and negative evidence
 
+### High-confidence split-M accumulator transfer
+
+The strongest directly matching experiment is C121, which became part of the
+C141 champion. Flash M=512 uses the same structural topology as the current
+MXFP4 M=512+ tier: `BM128/BN128/BK128`, with two M64N128 math warpgroups
+sharing one exactly recovered B tile. C121 changed only the compile-time
+eligibility of this topology from eight F32-accumulator WGMMAs to eight packed
+F16-accumulator WGMMAs. On a same-allocation 8xH200 comparison it reduced
+latency from 452.320 to 407.048 us (-10.01%), beat the paired FP8 control by
+9.46%, and passed exact eight-rank correctness. Registers remained 168 with
+zero stack/local memory; 192 scalar FFMAs became 96 HFMA2 plus 128 HADD2.
+
+An identical-flags SASS comparison confirms that the current Flash M=512
+MXFP4 specialization still emits eight
+`QGMMA.64x128x32.F32.E4M3.E4M3`, whereas the retained C141 cubin emits eight
+`QGMMA.64x128x32.F16.E4M3.E4M3`. Both use 168 registers and have no
+stack/local memory. The current specialization has 6,295 static instructions,
+33 `SYNCS.EXCH.64`, 82 phase-check try-waits, and 26 `STS.128`; C141 has 6,455,
+25, 74, and 17 respectively. This makes a bounded packed-F16 accumulator lane
+the highest-confidence large-M transfer. It must remain topology-gated rather
+than M-gated and must pass the MXFP4 numerical contract before timing.
+
+### Other evidence
+
 1. C141 uses a private sign-swizzled fused-weight cache while preserving the
    public Marlin ABI. Its isolated recovery core removes two fixed sign PRMTs
    and compiles to eight hot instructions. The current MXFP4 `dequant_word`
@@ -82,10 +106,13 @@ Use this ordering after the eight-GPU H20 gate becomes available:
 
 1. Measure the barrier-striped candidate across the complete M=8..8192 Flash
    denominator.
-2. If startup improves but the large-M rows remain decode-bound, test bounded
+2. Test packed-F16 accumulation only for the existing split-M decoded-weight
+   reuse topology, with M=512 correctness as the first gate and all eleven rows
+   as the promotion gate.
+3. If startup improves but the large-M rows remain decode-bound, test bounded
    overlap of independent E8M0 table construction/decode with the current
    TMA/WGMMA pipeline.
-3. Use partial-A TMA, tail mapping, or grouped register-fed decode only as
+4. Use partial-A TMA, tail mapping, or grouped register-fed decode only as
    isolated lanes with exact eight-rank correctness and paired controls.
-4. Reject per-M kernel copies, extra public formats, dense offline FP8 weights,
+5. Reject per-M kernel copies, extra public formats, dense offline FP8 weights,
    per-fragment WGMMA waits, and any result inferred from H200 timings alone.
