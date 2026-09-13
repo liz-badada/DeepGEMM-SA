@@ -264,7 +264,7 @@ def main() -> int:
         "schema_version": 20,
         "kind": "loom_kernel_candidate_evaluation",
         "campaign_id": campaign["campaign_id"],
-        "wave": lane["wave"],
+        "wave": request["wave"],
         "lane_id": attempt["attempt_id"],
         "candidate_id": candidate["candidate_id"],
         "commit": candidate["commit"],
