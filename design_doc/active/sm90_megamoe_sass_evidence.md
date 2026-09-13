@@ -37,6 +37,32 @@ load/store and synchronization instructions in its compiled body, while the
 `BN=256` path expresses one wide QGMMA sequence. Runtime scheduling, predicate
 activity, and expert occupancy determine which instructions actually execute.
 
+### MXFP4 M=8 candidate comparison
+
+The reproducible compile probe in
+`tools/sm90_mxfp4_flash_m8_compile_probe.cu` instantiates the exact Flash
+M=8 tuning tier: `SM=78`, `EPW=16`, `BM=8`, `BN=256`, four stages, pool
+capacity `399360`, and padded scale pool `6389760`. It does not launch the
+kernel and therefore does not replace the eight-rank correctness gate.
+
+| Property | Baseline | Barrier-striped candidate | Delta |
+| --- | ---: | ---: | ---: |
+| Registers | 168 | 168 | 0 |
+| Barriers | 16 | 16 | 0 |
+| Spill loads/stores | 0 / 0 | 0 / 0 | 0 / 0 |
+| Cubin bytes | 87648 | 87648 | 0 |
+| Static instructions | 4608 | 4648 | +40 |
+| `SYNCS.EXCH.64` | 29 | 6 | -23 |
+| `FENCE.VIEW.ASYNC.S` | 6 | 10 | +4 |
+| `VOTEU.ALL` | 2 | 10 | +8 |
+| `BRA.U.ANY` | 1 | 6 | +5 |
+
+The candidate trades a shorter per-lane initialization sequence for lane
+selection, voting, and uniform-branch control. The static body is larger, but
+the original 29 barrier exchanges were issued serially by one elected lane;
+the candidate distributes independent exchanges across lanes. This is a
+small-M startup-latency hypothesis, not a proven performance win.
+
 ## 🔍 Aichen NVFP4 transfer points
 
 The checked-out MXFP4 body and Aichen NVFP4 body use the same high-level SM90
