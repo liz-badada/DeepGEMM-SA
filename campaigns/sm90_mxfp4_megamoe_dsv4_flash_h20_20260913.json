@@ -77,7 +77,11 @@
     "tests/bench_mega_moe_formats_sm90.py",
     "tests/test_mxfp4_mega_moe_sm90_correctness.py",
     "scripts/run_ncu_mega_moe.sh",
-    "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+    "scripts/run_ncu_mega_moe_sm90.sh",
+    "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh",
+    "csrc/jit_kernels/heuristics/sm90_nvfp4_mega_moe.hpp",
+    "deep_gemm/include/deep_gemm/impls/sm90_nvfp4_mega_moe_h200_fused.cuh",
+    "deep_gemm/include/deep_gemm/impls/sm90_nvfp4_mega_moe_h200_fused_body.inl"
   ],
   "source_access_policy": null,
   "qualified_seed_inputs": [],
