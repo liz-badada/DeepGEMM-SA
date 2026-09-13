@@ -31,9 +31,14 @@ forced scale-major `(1, M)` storage even though the public indexed compute
 configuration remained row-major. An evidence-only wrapper corrected those
 two layout mismatches without changing the quantized values or kernel.
 
-The corrected single-GPU H20 probe executed the indexed kernel at `M=8` and
-reported 0.1568 ms for `N=K=4096`, 256 experts, and `topk=6`. This establishes
-that the selected cubin is dynamically executable on H20. It is not a
+The corrected single-GPU H20 probe executed the indexed kernel for small M at
+`N=K=4096`, 256 experts, and `topk=6`:
+
+| M | 8 | 16 | 32 | 64 | 128 | 256 |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Humming latency (ms) | 0.1570 | 0.2603 | 0.4223 | 0.6749 | 0.8443 | 0.9889 |
+
+This establishes that the selected cubins are dynamically executable on H20. It is not a
 correctness result and is not comparable with the eight-rank persistent
 DeepGEMM contract, so it remains mechanism evidence rather than a campaign
 latency denominator. Humming's generic result saver also attempted an
@@ -154,7 +159,8 @@ The H20 workspace contains reproducible cubins, SASS, resources, compiler
 signatures, and source snapshots under:
 
 - `evidence/humming-sm90/selected-m8` and `lowreg-bk256`.
-- `evidence/humming-sm90/probe_humming_h20.py` and `probe-m8-run.log` for the
+- `evidence/humming-sm90/probe_humming_h20.py`, `probe-m8-run.log`, and
+  `probe-small-m-run.log` for the
   evidence-only single-GPU H20 compatibility run.
 - `evidence/deepgemm-sm90-current-m8`.
 - `evidence/vllm-marlin-sm90`, including BF16 MXFP4 and forced FP8/MXFP4.
