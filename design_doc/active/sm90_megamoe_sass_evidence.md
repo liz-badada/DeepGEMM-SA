@@ -107,6 +107,17 @@ exchanges in the current unstriped Flash M=8 specialization confirms that the
 candidate is changing a startup protocol inherited from Aichen rather than an
 unrelated path.
 
+Compiling the same native specialization at parent commit `122fabe` isolates
+Aichen's interleaved-scheduler change. Commit `8b59b19` reduces the static body
+from 6,514 to 5,573 instructions and the cubin from 106,704 to 90,704 bytes,
+with registers (119), WGMMA operations (16), warpgroup pairs (four), and CTA
+barriers (32) unchanged. The scheduling pipeline trades that code-footprint
+reduction for slightly more synchronization: `SYNCS.EXCH.64` rises from 25 to
+29 and phase-check try-waits from 72 to 78, while `UTMALDG.2D` falls from 41 to
+40. The Flash branch already contains this scheduler. A useful next step is
+therefore to reduce its fixed synchronization overhead, as the striped-barrier
+candidate attempts, rather than reimplement the scheduler.
+
 The reusable lesson is the protocol rather than a blind source transplant.
 Hopper WGMMA is an asynchronous warpgroup operation whose fence, commit, and
 wait ordering must remain intact.[^3] Likewise, independent mbarrier objects
