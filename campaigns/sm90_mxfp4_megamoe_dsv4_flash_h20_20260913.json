@@ -76,6 +76,7 @@
   "implementation_references": [
     "tests/bench_mega_moe_formats_sm90.py",
     "tests/test_mxfp4_mega_moe_sm90_correctness.py",
+    "design_doc/active/sm90_megamoe_sass_evidence.md",
     "scripts/run_ncu_mega_moe.sh",
     "scripts/run_ncu_mega_moe_sm90.sh",
     "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh",
