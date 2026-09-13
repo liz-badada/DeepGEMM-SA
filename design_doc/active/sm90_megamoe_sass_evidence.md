@@ -93,6 +93,20 @@ resource plan:
 - `BLOCK_M=8` with four stages, `BLOCK_M=16/24` with three stages,
   `BLOCK_M=64` with three stages, and `BLOCK_M=128` with six stages
 
+An independent native Aichen compile at commit `8b59b19` instantiated its
+M=8 tier (`EPW=16`, `BM=8`, `BN=256`, four stages) with CUDA 13.1, C++20,
+`sm_90a`, and relaxed constexpr support. This branch hard-codes its original
+H200 model (`H=6144`, `IH=2048`, 384 experts, top-k 8, 132 SMs), so it is a
+mechanism reference rather than a Flash benchmark. The resulting 90,704-byte
+cubin used 119 registers, zero stack/local memory, and contained 5,573 static
+instructions. Its relevant static counts include 29 `SYNCS.EXCH.64`, 16
+`QGMMA.64`, 126 LDS-family operations, 64 STS-family operations, six
+`FENCE.VIEW.ASYNC.S`, four warpgroup arrive/dependency-barrier pairs, and 32
+`BAR.SYNC.DEFER_BLOCKING` operations. The identical count of 29 barrier
+exchanges in the current unstriped Flash M=8 specialization confirms that the
+candidate is changing a startup protocol inherited from Aichen rather than an
+unrelated path.
+
 The reusable lesson is the protocol rather than a blind source transplant.
 Hopper WGMMA is an asynchronous warpgroup operation whose fence, commit, and
 wait ordering must remain intact.[^3] Likewise, independent mbarrier objects
