@@ -154,6 +154,13 @@ def main() -> int:
     output_path = Path(os.environ["LOOM_EVALUATION_OUTPUT"])
     artifact_root = Path(os.environ["LOOM_EVALUATION_ARTIFACT_ROOT"])
     artifact_root.mkdir(parents=True, exist_ok=True)
+    jit_cache_root = Path(
+        os.environ.setdefault("DG_JIT_CACHE_DIR", str(artifact_root / "deep-gemm-jit"))
+    )
+    # DeepGEMM's JIT constructor lazily creates this directory in every rank.
+    # Create it once here to avoid an EEXIST race in make_dirs(), and keep the
+    # cache off quota-constrained $HOME on the direct-connect H20 hosts.
+    (jit_cache_root / "tmp").mkdir(parents=True, exist_ok=True)
     request = json.loads(input_path.read_text(encoding="utf-8"))
     campaign = request["campaign"]
     lane = request["lane"]
@@ -194,25 +201,33 @@ def main() -> int:
     )
 
     benchmark_log = artifact_root / "paired-benchmark.log"
-    benchmark = _run(
-        [
-            sys.executable,
-            "tests/bench_mega_moe_formats_sm90.py",
-            "--num-processes", "8",
-            "--arms", "fp8", "mxfp4",
-            "--baseline", "fp8",
-            "--batches", *(str(m) for m in FLASH_BATCHES),
-            "--hidden", "4096",
-            "--intermediate-hidden", "2048",
-            "--num-experts", "256",
-            "--num-topk", "6",
-            "--num-max-tokens-per-rank", "8192",
-            "--fast-math", "1",
-            "--num-tests", "20",
-            "--reps", "3",
-        ],
-        benchmark_log,
-    )
+    if correctness.returncode == 0:
+        _wait_for_exclusive_gpus(artifact_root / "gpu-availability-pre-performance.log")
+        benchmark = _run(
+            [
+                sys.executable,
+                "tests/bench_mega_moe_formats_sm90.py",
+                "--num-processes", "8",
+                "--arms", "fp8", "mxfp4",
+                "--baseline", "fp8",
+                "--batches", *(str(m) for m in FLASH_BATCHES),
+                "--hidden", "4096",
+                "--intermediate-hidden", "2048",
+                "--num-experts", "256",
+                "--num-topk", "6",
+                "--num-max-tokens-per-rank", "8192",
+                "--fast-math", "1",
+                "--num-tests", "20",
+                "--reps", "3",
+            ],
+            benchmark_log,
+        )
+    else:
+        benchmark = subprocess.CompletedProcess([], 125, "")
+        benchmark_log.write_text(
+            "SKIPPED: exact MXFP4 correctness did not pass.\n",
+            encoding="utf-8",
+        )
 
     rows: list[dict[str, float | int]] = []
     if benchmark.returncode == 0:
