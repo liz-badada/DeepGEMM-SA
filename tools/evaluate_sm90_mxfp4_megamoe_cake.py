@@ -45,6 +45,8 @@ def _run(command: list[str], log: Path) -> subprocess.CompletedProcess[str]:
     :rtype: subprocess.CompletedProcess[str]
     """
     env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
+    env["NVIDIA_VISIBLE_DEVICES"] = "0,1,2,3,4,5,6,7"
     env.setdefault("DG_BENCH_FLUSH_L2_BYTES", str(8_000_000_000))
     proc = subprocess.run(
         command,
