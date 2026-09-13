@@ -40,9 +40,10 @@ activity, and expert occupancy determine which instructions actually execute.
 ### MXFP4 M=8 candidate comparison
 
 The reproducible compile probe in
-`tools/sm90_mxfp4_flash_m8_compile_probe.cu` instantiates the exact Flash
-M=8 tuning tier: `SM=78`, `EPW=16`, `BM=8`, `BN=256`, four stages, pool
-capacity `399360`, and padded scale pool `6389760`. It does not launch the
+`tools/sm90_mxfp4_flash_compile_probe.cu` defaults to the exact Flash M=8
+tuning tier: `SM=78`, `EPW=16`, `BM=8`, `BN=256`, four stages, pool capacity
+`399360`, and padded scale pool `6389760`. Preprocessor overrides allow the
+same source to instantiate every other tuning tier. It does not launch the
 kernel and therefore does not replace the eight-rank correctness gate.
 
 | Property | Baseline | Barrier-striped candidate | Delta |
@@ -62,6 +63,24 @@ selection, voting, and uniform-branch control. The static body is larger, but
 the original 29 barrier exchanges were issued serially by one elected lane;
 the candidate distributes independent exchanges across lanes. This is a
 small-M startup-latency hypothesis, not a proven performance win.
+
+The parameterized probe also covers every distinct heuristic tier used by the
+eleven benchmark rows. All ten baseline/candidate compilations retained
+`168` registers, `16` barriers, zero spills, and zero local memory.
+
+| Benchmark rows | `BM x BN` | Stages | Static instructions | `SYNCS.EXCH.64` |
+| --- | --- | ---: | ---: | ---: |
+| M=8,16 | `8 x 256` | 4 | `4608 -> 4648` | `29 -> 6` |
+| M=32 | `16 x 256` | 3 | `5256 -> 5296` | `27 -> 6` |
+| M=64 | `24 x 256` | 3 | `5640 -> 5672` | `27 -> 6` |
+| M=128,256 | `64 x 256` | 3 | `5648 -> 5680` | `27 -> 6` |
+| M=512..8192 | `128 x 128` | 6 | `5352 -> 5376` | `33 -> 6` |
+
+Across tiers, the candidate adds five `BRA.U.ANY`, eight `VOTEU.ALL`, four
+`FENCE.VIEW.ASYNC.S`, three `IMAD`, three `LEA`, and fifteen `PLOP3.LUT`
+instructions while removing one `ELECT` and 21--27 `SYNCS.EXCH.64`
+instructions from the static body. Dynamic latency remains an empirical
+question because the lane-distributed path executes in parallel.
 
 ## 🔍 Aichen NVFP4 transfer points
 
