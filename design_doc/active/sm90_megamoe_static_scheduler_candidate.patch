@@ -1,0 +1,19 @@
+diff --git a/csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp b/csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp
+index 95138b3..fd01502 100644
+--- a/csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp
++++ b/csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp
+@@ -191,7 +191,13 @@ select_sm90_mxfp4_h200_fused(
+         tuning.swap_ab,
+         tuning.use_mode2_row_decoder,
+         tuning.single_active_dispatch_warp,
+-        true,
++        // M=16 and M=32 have enough routed tile work to fill H20's SMs but
++        // little compute with which to amortize global task-counter atomics
++        // and the per-task mailbox protocol.  Use the existing static,
++        // SM-strided expert-wave assignment for just those two tiers; retain
++        // dynamic interleaving for M=8 (where sparse expert occupancy needs
++        // balancing) and for M>=64 (where routed skew grows with the batch).
++        input.num_tokens <= 8 || input.num_tokens > 32,
+     };
+ }
+ 
