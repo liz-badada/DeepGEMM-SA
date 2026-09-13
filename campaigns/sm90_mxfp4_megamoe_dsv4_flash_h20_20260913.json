@@ -4,7 +4,7 @@
   "campaign_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-direct-v2-20260913",
   "kernel": "sm90_mxfp4_megamoe_dsv4_flash",
   "objective": "Systematically optimize the existing SM90 FP8-activation x MXFP4-weight persistent MegaMoE kernel on 8x NVIDIA H20 for the exact DeepSeek-V4-Flash model shape. Achieve a material win over the merged PR #383 FP8 path across the full M=8..8192 denominator, with special attention to the current M=16 and M=32 regressions. Study the inherited AichenF megamoe_nvfp4_dev_m implementation and generated SASS, use NCU/NSYS/CUPTI evidence to identify bottlenecks, and preserve the one-persistent-kernel MXFP4 design and exact model semantics.",
-  "base_commit": "67f7bf0a8b25b80cc0ca237bbd72af46c7c51206",
+  "base_commit": "41cdd769c290355891b868be3591b9c8348f86d6",
   "scope_paths": [
     "csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp",
     "deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused.cuh",
