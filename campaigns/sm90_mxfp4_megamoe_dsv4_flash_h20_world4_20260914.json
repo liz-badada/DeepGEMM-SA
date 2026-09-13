@@ -26,7 +26,7 @@
     "Keep experimental axes attributable. Start with two isolated lanes: (1) diagnose and repair the M=512 tile/stage/experts-per-wave transition; (2) Humming DP4A/PRMT decode plus small-M BN512/BK64 only when exact equivalence is demonstrated. Do not mix arithmetic, tiling, cache policy, and barriers in one candidate.",
     "NCU counters are unavailable due ERR_NVGPUCTRPERM; do not invent counter evidence. Use generated SASS, register/resource reports, timings, and controlled A/B changes.",
     "Never kill or interfere with existing SGLang. Only use GPUs explicitly bound by CUDA_VISIBLE_DEVICES after verifying they are idle.",
-    "Never write evaluation data, JIT caches, builds, logs, worktrees, or temporary files under home. On 10.6.131.5 and 10.6.131.6 use /lustre/raplab/client/jinyanc/workspace/jinyanc; on 10.6.131.24 and 10.6.131.25 use /raid/sharedspace/jinyanc.",
+    "Every generated file must stay under the host-specific workspace root, including temporary files, SASS/cubin dumps, evaluation data, JIT caches, builds, logs, environments, and worktrees; do not use home or /tmp. On 10.6.131.5 and 10.6.131.6 the only allowed root is /lustre/raplab/client/jinyanc/workspace/jinyanc; on 10.6.131.24 and 10.6.131.25 the only allowed root is /raid/sharedspace/jinyanc.",
     "Commit each correct measured improvement before starting the next risky experiment and keep changes within scope_paths."
   ],
   "required_gates": [
