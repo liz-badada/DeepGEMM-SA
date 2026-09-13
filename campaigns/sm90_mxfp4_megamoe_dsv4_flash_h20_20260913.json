@@ -1,0 +1,98 @@
+{
+  "schema_version": 42,
+  "kind": "loom_kernel_campaign_request",
+  "campaign_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-direct-20260913",
+  "kernel": "sm90_mxfp4_megamoe_dsv4_flash",
+  "objective": "Systematically optimize the existing SM90 FP8-activation x MXFP4-weight persistent MegaMoE kernel on 8x NVIDIA H20 for the exact DeepSeek-V4-Flash model shape. Achieve a material win over the merged PR #383 FP8 path across the full M=8..8192 denominator, with special attention to the current M=16 and M=32 regressions. Study the inherited AichenF megamoe_nvfp4_dev_m implementation and generated SASS, use NCU/NSYS/CUPTI evidence to identify bottlenecks, and preserve the one-persistent-kernel MXFP4 design and exact model semantics.",
+  "base_commit": "cd112f930aff1b2a4ed2afe3b9b58f40f03d4a67",
+  "scope_paths": [
+    "csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp",
+    "deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused.cuh",
+    "deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl"
+  ],
+  "fixed_constraints": [
+    "The workload is exactly DeepSeek-V4-Flash: hidden=4096, intermediate_hidden=2048, num_experts=256, topk=6, world_size=8, FP8 activations, OCP MXFP4 routed weights, SwiGLU, activation_clamp=10, fast_math=1.",
+    "Evaluate every M in 8,16,32,64,128,256,512,1024,2048,4096,8192; never substitute the MiMo 6144/2048/384/topk8 defaults.",
+    "Every candidate must pass exact-dequantized MXFP4 correctness before performance is comparable; do not loosen the FP4 tolerance or cosine/norm gates.",
+    "Use same-process same-input interleaved CUPTI cold-L2 measurements against the live PR #383 FP8 path; published PR #383 H20 times are diagnostic anchors only.",
+    "The success gate is every-row speedup >=1.05 and geometric-mean speedup >=1.10 versus the live FP8 path; optimize the minimum row first.",
+    "Do not use CUDA graphs, framework fallbacks, pre-expanded persistent FP8 weight copies, benchmark shortcuts, exact-output caches, or skipped synchronization.",
+    "Preserve the public Python/C++ ABI, 8-rank symmetric-buffer protocol, packed Mode2 Braided MXFP4 layout, and one persistent kernel launch.",
+    "Before each structural mutation inspect generated SASS/resource usage and record the hypothesis; use NCU after latency plateaus to distinguish WGMMA, TMA, decode, barrier, register, and occupancy limits.",
+    "Commit each correct measured improvement before starting the next risky experiment and keep changes within scope_paths."
+  ],
+  "required_gates": [
+    "dsv4_flash_structure",
+    "mxfp4_correctness",
+    "paired_performance"
+  ],
+  "metric": {
+    "name": "minimum_speedup_vs_baseline",
+    "direction": "maximize",
+    "unit": "ratio"
+  },
+  "evaluator": {
+    "evaluator_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-v1",
+    "command": [
+      "python",
+      "tools/evaluate_sm90_mxfp4_megamoe_cake.py"
+    ],
+    "gpu_count": 1,
+    "timeout_seconds": 7500,
+    "resource_wait_seconds": 43200,
+    "topology_partitions": [],
+    "runtime_dependency": null
+  },
+  "execution_policy": {
+    "max_waves": 12,
+    "max_candidates_per_wave": 2,
+    "max_total_candidates": 24,
+    "max_parallel": 2,
+    "gpu_eval_parallelism": 1,
+    "worker_turn_attempt_limit": 2
+  },
+  "contract_binding": {
+    "contract_path": "design_doc/active/eval_contract_sm90_mxfp4_megamoe_dsv4_flash.yaml",
+    "contract_version": "v1-2026-09-13",
+    "canonical_shape_labels": [
+      "flash_m8",
+      "flash_m16",
+      "flash_m32",
+      "flash_m64",
+      "flash_m128",
+      "flash_m256",
+      "flash_m512",
+      "flash_m1024",
+      "flash_m2048",
+      "flash_m4096",
+      "flash_m8192"
+    ],
+    "validation_mode": "pre_ratification"
+  },
+  "workflow_mode": "shape_specific_evolution",
+  "dispatcher_policy": null,
+  "terminal_dispatcher_interface_policy": null,
+  "shape_performance_policy": null,
+  "implementation_references": [
+    "tests/bench_mega_moe_formats_sm90.py",
+    "tests/test_mxfp4_mega_moe_sm90_correctness.py",
+    "scripts/run_ncu_mega_moe.sh",
+    "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh"
+  ],
+  "source_access_policy": null,
+  "qualified_seed_inputs": [],
+  "seed_evolution_policy": null,
+  "forbidden_read_paths": [],
+  "implementation_sandbox": "full_access",
+  "promotion": null,
+  "agent": {
+    "backend": "codex",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "xhigh",
+    "agent_bin": "/home/jinyanc/.local/bin/codex",
+    "auth_source": "/home/jinyanc/.codex/auth.json",
+    "worker_fork_strategy": "fresh_from_rank",
+    "system_prompt_mode": "claude_code"
+  },
+  "turn_timeout_seconds": 7200
+}
