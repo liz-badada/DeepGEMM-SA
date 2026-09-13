@@ -38,6 +38,14 @@ The corrected single-GPU H20 probe executed the indexed kernel for small M at
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Humming latency (ms) | 0.1570 | 0.2603 | 0.4223 | 0.6749 | 0.8443 | 0.9889 |
 
+An isolated same-GPU M=8 A/B measured 0.1585 ms for the selected
+`BN512/BK64`, three-stage, three-CTA-per-SM body and 0.1902 ms for the
+64-register `BN128/BK256`, four-stage, two-CTA-per-SM body. The wider-N,
+shallower-K body is about 16.7% lower latency in Humming despite using more
+registers. This rejects register count alone as an occupancy proxy and
+strengthens the separate BN512/BK64 search axis, without predicting its
+effect inside DeepGEMM's distributed persistent protocol.
+
 This establishes that the selected cubins are dynamically executable on H20. It is not a
 correctness result and is not comparable with the eight-rank persistent
 DeepGEMM contract, so it remains mechanism evidence rather than a campaign
@@ -162,6 +170,9 @@ signatures, and source snapshots under:
 - `evidence/humming-sm90/probe_humming_h20.py`, `probe-m8-run.log`, and
   `probe-small-m-run.log` for the
   evidence-only single-GPU H20 compatibility run.
+- `evidence/humming-sm90/probe_humming_h20_ab.py`,
+  `probe-m8-bn512-bk64-ab.log`, and `probe-m8-lowreg-bk256.log` for the
+  controlled M=8 topology A/B.
 - `evidence/deepgemm-sm90-current-m8`.
 - `evidence/vllm-marlin-sm90`, including BF16 MXFP4 and forced FP8/MXFP4.
 - `evidence/original-marlin-sm90/fp16-int4-m16-group128.sass`.
