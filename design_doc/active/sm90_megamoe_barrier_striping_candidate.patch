@@ -1,0 +1,48 @@
+diff --git a/deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl b/deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl
+index 0c29c30..9d91c06 100644
+--- a/deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl
++++ b/deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused_body.inl
+@@ -257,26 +257,23 @@
+         cutlass::arch::fence_barrier_init();
+     } else if (warp_idx == 2) {
+         // Init GEMM full/empty barriers and combine barriers
+-        if (cute::elect_one_sync()) {
+-            #pragma unroll
+-            for (uint32_t i = 0; i < kNumStages; ++ i) {
+-                // Producer arrivals: A(+SFA) + B(TMA+SFB). SFB is copied with
+-                // cp.async.bulk and counted as B-loader transaction bytes, so
+-                // it does not need a separate producer arrival.
+-                full_barriers[i]->init(2);
+-                empty_barriers[i]->init(kNumEpilogueWarps);
+-            }
+-            #pragma unroll
+-            for (uint32_t i = 0; i < kNumEpilogueWarps * 2; ++ i)
+-                combine_barriers[i]->init(1);
+-            if constexpr (kUseInterleavedScheduler) {
+-                #pragma unroll
+-                for (uint32_t i = 0;
+-                     i < interleaved_scheduler_t::kNumScheduleStages;
+-                     ++ i) {
+-                    task_info_full_barriers[i].init(1);
+-                    task_info_empty_barriers[i].init(kNumEpilogueWarps);
+-                }
++        // These barriers are independent.  Stripe their initialization over
++        // the otherwise idle warp instead of making one elected lane execute
++        // the entire startup sequence serially.  The fence and CTA sync below
++        // retain the original publication point before any role can use them.
++        if (lane_idx < kNumStages) {
++            // Producer arrivals: A(+SFA) + B(TMA+SFB). SFB is copied with
++            // cp.async.bulk and counted as B-loader transaction bytes, so it
++            // does not need a separate producer arrival.
++            full_barriers[lane_idx]->init(2);
++            empty_barriers[lane_idx]->init(kNumEpilogueWarps);
++        }
++        if (lane_idx < kNumEpilogueWarps * 2)
++            combine_barriers[lane_idx]->init(1);
++        if constexpr (kUseInterleavedScheduler) {
++            if (lane_idx < interleaved_scheduler_t::kNumScheduleStages) {
++                task_info_full_barriers[lane_idx].init(1);
++                task_info_empty_barriers[lane_idx].init(kNumEpilogueWarps);
+             }
+         }
+         cutlass::arch::fence_barrier_init();

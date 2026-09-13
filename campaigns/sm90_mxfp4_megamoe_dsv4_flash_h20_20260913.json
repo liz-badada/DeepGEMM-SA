@@ -79,6 +79,7 @@
     "tools/sm90_mxfp4_flash_compile_probe.cu",
     "design_doc/active/sm90_megamoe_sass_evidence.md",
     "design_doc/active/sm90_megamoe_historical_c141_evidence.md",
+    "design_doc/active/sm90_megamoe_barrier_striping_candidate.patch",
     "scripts/run_ncu_mega_moe.sh",
     "scripts/run_ncu_mega_moe_sm90.sh",
     "deep_gemm/include/deep_gemm/impls/sm90_fp8_mega_moe.cuh",
