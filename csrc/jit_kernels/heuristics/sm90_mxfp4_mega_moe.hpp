@@ -138,6 +138,9 @@ select_sm90_mxfp4_h200_fused(
     else if (input.num_tokens <= 256)
         tuning = {64, 256, 48, 3, 209856,
                   false, true, false};
+    else if (input.num_tokens <= 512)
+        tuning = {64, 256, 48, 3, 209856,
+                  false, true, false};
     else
         tuning = {128, 128, 48, 6, SM90ArchSpec::smem_capacity,
                   false, true, false};
