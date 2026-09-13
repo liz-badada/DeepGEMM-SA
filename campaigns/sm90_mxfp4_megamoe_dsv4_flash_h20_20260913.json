@@ -1,10 +1,10 @@
 {
   "schema_version": 42,
   "kind": "loom_kernel_campaign_request",
-  "campaign_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-f16-v3-20260913",
+  "campaign_id": "sm90-mxfp4-megamoe-dsv4-flash-h20-humming-marlin-v4-20260913",
   "kernel": "sm90_mxfp4_megamoe_dsv4_flash",
   "objective": "Systematically optimize the existing SM90 FP8-activation x MXFP4-weight persistent MegaMoE kernel on 8x NVIDIA H20 for the exact DeepSeek-V4-Flash model shape. Use the rejected packed-F16 live result only as negative evidence, finish the isolated barrier-striped evaluation, then search equivalence-tested Humming-style E2M1+E8M0 register decode, small-M BN512/BK64 occupancy, and supported streaming-weight cache policy as separate attributable axes. Achieve a material win over the merged PR #383 FP8 path across the full M=8..8192 denominator. Study AichenF, Humming, vLLM Marlin, original Marlin, and their generated SASS while preserving the one-persistent-kernel MXFP4 design, interleaved distributed scheduler unless live H20 evidence justifies a change, and exact model semantics.",
-  "base_commit": "ea8a268b2bf9bae3673388788680e53441c9195d",
+  "base_commit": "d5afc54765ef137ad851924f0113d57fdd1898aa",
   "scope_paths": [
     "csrc/jit_kernels/heuristics/sm90_mxfp4_mega_moe.hpp",
     "deep_gemm/include/deep_gemm/impls/sm90_mxfp4_mega_moe_h200_fused.cuh",
@@ -18,9 +18,9 @@
     "The success gate is every-row speedup >=1.05 and geometric-mean speedup >=1.10 versus the live FP8 path; optimize the minimum row first.",
     "Do not use CUDA graphs, framework fallbacks, pre-expanded persistent FP8 weight copies, benchmark shortcuts, exact-output caches, or skipped synchronization.",
     "Preserve the public Python/C++ ABI, 8-rank symmetric-buffer protocol, packed Mode2 Braided MXFP4 layout, and one persistent kernel launch.",
-    "Wave 1 must include a coherent packed-F16 accumulator candidate gated by kSplitMDecodedWeightReuse. It must port the F16 WGMMA wrapper, packed accumulation, half2 scale promotion, both L1 and L2 paths, and conversion to the existing float epilogue; changing only an eligibility predicate is invalid because the current MXFP4 base lacks the C121 infrastructure.",
-    "Before timing the packed-F16 candidate, prove the exact M512 specialization emits eight QGMMA.64x128x32.F16.E4M3.E4M3 instructions, no F32 QGMMA, 168 registers, and zero stack/local/spill. Reject a candidate that merely compiles without satisfying this SASS signature.",
-    "Preserve the current interleaved scheduler in the packed-F16 lane. The retained H200 A/B evidence showed interleaving improved M16 and M32, so a static-scheduler reversal requires separate live H20 evidence and must not be combined with the F16 change.",
+    "The complete packed-F16 accumulator candidate already passed exact correctness but measured only 0.713x minimum and 0.780x geometric-mean speedup versus live FP8. Treat it as rejected negative evidence and do not use or recreate it as a base.",
+    "Wave 1 must use the Humming and Marlin SASS evidence. Prefer two isolated lanes: an exhaustively equivalence-tested Humming-style DP4A/PRMT E2M1+E8M0 decoder, and a small-M-only BN512/BK64 scheduling/occupancy candidate. Do not combine arithmetic, tiling, cache-policy, and barrier mutations in one candidate.",
+    "Humming and Marlin are mechanism references, not performance denominators. Preserve Hopper QGMMA, E8M0 group width 32, saturation/underflow behavior, the distributed persistent protocol, and the current interleaved scheduler unless exact live H20 evidence justifies one isolated change.",
     "Before each structural mutation inspect generated SASS/resource usage and record the hypothesis; use NCU after latency plateaus to distinguish WGMMA, TMA, decode, barrier, register, and occupancy limits.",
     "Never write evaluation data, JIT caches, builds, or logs under home on the H20 hosts. For 10.6.131.5 and 10.6.131.6 use /lustre/raplab/client/jinyanc/workspace/jinyanc; for 10.6.131.24 and 10.6.131.25 use /raid/sharedspace/jinyanc.",
     "Commit each correct measured improvement before starting the next risky experiment and keep changes within scope_paths."
