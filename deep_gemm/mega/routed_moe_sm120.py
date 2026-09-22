@@ -538,9 +538,7 @@ def _fp8_fp4_routed_moe_sm120_locked(
     if prepare_key not in session._prepared_kernels:
         _C.prepare_sm120_fp8_fp4_routed_moe(session.world_size, rows)
         dist.barrier(group=session.group, device_ids=[session.device.index])
-        # NCCL barriers only guarantee host-side enqueue.  Complete the
-        # one-time prepare on every rank before creating tensor maps or
-        # launching the first distributed kernel.
+        # Finish the enqueued prepare before tensor-map creation and launch.
         torch.cuda.synchronize(session.device)
         session._prepared_kernels.add(prepare_key)
 
