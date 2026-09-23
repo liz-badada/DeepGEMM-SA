@@ -92,6 +92,9 @@ from .mega import (
     transform_weights_for_mega_moe_sm90,
     fp8_fp4_mega_moe,
     fp8_mega_moe,
+    SM120RoutedMoESession,
+    SM120RoutedMoEWorkspace,
+    fp8_fp4_routed_moe_sm120,
 )
 
 # Some utils
