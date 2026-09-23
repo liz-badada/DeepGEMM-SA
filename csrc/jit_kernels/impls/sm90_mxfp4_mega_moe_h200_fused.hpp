@@ -165,17 +165,12 @@ static void sm90_mxfp4_h200_fused_mega_moe(
     using KernelConfig = SM90MXFP4H200FusedConfig;
     DG_HOST_ASSERT(num_experts_per_rank % config.num_experts_per_wave == 0);
     DG_HOST_ASSERT((config.block_m == 8 || config.block_m == 16 ||
-                    config.block_m == 24 || config.block_m == 64 ||
-                    config.block_m == 128));
+                    config.block_m == 24 || config.block_m == 32 ||
+                    config.block_m == 64 || config.block_m == 128));
     DG_HOST_ASSERT(config.block_n == 128 || config.block_n == 256);
-    // What the kernel actually requires, rather than which token count the
-    // shipped table happens to enable swapAB for: the transposed path packs
-    // tokens into the WGMMA N dimension, so it needs BLOCK_M <= 24, and the
-    // straight path needs a full M64 warpgroup tile. Pinning this to
-    // `num_tokens <= 64` blocked every experiment that carries a small BLOCK_M
-    // into a larger batch, which is exactly what the reference NVFP4 selector
-    // does above M=64.
-    DG_HOST_ASSERT(plan.swap_ab ? config.block_m <= 24
+    // The transposed path packs tokens into the WGMMA N dim (BLOCK_M<=32);
+    // the straight path needs a full M64 warpgroup tile.
+    DG_HOST_ASSERT(plan.swap_ab ? config.block_m <= 32
                                 : (config.block_m == 64 || config.block_m == 128));
 
     constexpr int kL1ScaleGranK = 128;

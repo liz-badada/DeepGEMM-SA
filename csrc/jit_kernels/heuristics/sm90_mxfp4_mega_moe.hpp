@@ -183,19 +183,18 @@ select_sm90_mxfp4_h200_fused(
     // warps, and there the wider tile wins anyway by giving that decode a
     // longer WGMMA to hide behind.
     // max_tokens_for_block_m is a mean, and a tile has to hold the busiest
-    // expert, not the average one. Leave a quarter of it as headroom for that
-    // imbalance: measured on MiMo, BM8 is still the better tile at M=32 but
-    // costs 10% at M=40 and M=48 against its nominal bound of 48, because by
-    // then enough experts need a second m-block.
+    // expert, not the average one. 70% headroom (was 75%): the 75% bound put
+    // DSv4 EP8/M=96 and EP4/M=192 right at the edge, still losing 3-8%.
     const auto tokens_per_block_m = [&](const int block_m) {
-        return max_tokens_for_block_m(block_m) * 3 / 4;
+        return max_tokens_for_block_m(block_m) * 7 / 10;
     };
     const auto swap_ab_block_m = [&]() {
-        for (const int block_m : {8, 24}) {
+        for (const int block_m : {8, 24, 32}) {
             if (input.num_tokens <= tokens_per_block_m(block_m))
                 return block_m;
         }
-        return 24;
+        // Past every bound, the widest transposed tile spills fewest experts.
+        return 32;
     }();
 
     if (input.num_tokens <= 1)
@@ -210,11 +209,11 @@ select_sm90_mxfp4_h200_fused(
     else if (input.num_tokens <= swap_ab_max_tokens)
         tuning = {swap_ab_block_m, 256, 48, 8, SM90ArchSpec::smem_capacity,
                   true, true, true, true};
-    else if (input.num_tokens <= 256)
-        tuning = {64, 256, 48, 3, SM90ArchSpec::smem_capacity,
-                  false, true, false, false};
+    // BN256 beats the old BM128/BN128 split-M plan at every M>256 batch
+    // measured on both shapes (up to 55% at DSv4). BM128 stays reachable via
+    // DG_MXFP4_BLOCK_M=128 but is never auto-selected.
     else
-        tuning = {128, 128, 48, 6, SM90ArchSpec::smem_capacity,
+        tuning = {64, 256, 48, 3, SM90ArchSpec::smem_capacity,
                   false, true, false, false};
 
     // Tuning override hook. The table above was measured on H200's 132 SMs;
