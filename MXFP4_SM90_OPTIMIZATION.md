@@ -1198,6 +1198,348 @@ validate it, and two changes this session that looked equally sound on paper
 
 ---
 
+### 9.14 Scope correction: everything above only describes M <= 256
+
+Sections 9.7-9.13 sweep M = 8..256 and quote 69-84 % of achievable. **That
+framing does not describe the large-M region at all**, and the reason is a bug,
+not a gap in the measurements.
+
+The tier rule sent `num_tokens > 256` to the BM128/BN128 split-M plan. That 256
+was a bare constant sitting among bounds otherwise derived from
+`experts / (ranks * topk)`, and the plan it selects loses to the straight BN256
+tile at **every** batch measured, on both shapes (EP4, H20-3e):
+
+| M | MiMo before | MiMo after | DSv4-Flash before | DSv4-Flash after |
+|---:|---:|---:|---:|---:|
+| 384 | 2200 | **1455** | 1963 | **880** |
+| 512 | 2256 | **1825** | 1964 | **874** |
+| 768 | 3367 | **2332** | 1981 | **1514** |
+| 1024 | | | 1995 | **1670** |
+| 1536 | | | 3840 | **2429** |
+| 2048 | | | 3953 | **2923** |
+
+Against FP8 that is a **22-112 % loss turned into parity or a small win**.
+Fixed in e2c99d4 by never selecting the plan; it stays reachable through
+`DG_MXFP4_BLOCK_M=128`.
+
+**Two process failures are worth recording, because both were avoidable.**
+
+First, section 8 already noted "at M>=1024 the fused FP4 path loses to FP8 by
+~20 %" and filed it as a property of the large-M tier. It was this bug, visible
+the whole time, mistaken for a known limitation instead of investigated.
+
+Second, the shape. `is_supported_shape()` admits DeepSeek-V4-Flash
+(4096 / 2048 / 256 experts / topk 6) and says so in a comment, but
+`tests/compile_all_megamoe_kernels.sh` hardcoded MiMo's dimensions in
+`mxfp4_src()`, so **every gate row tested one shape**. A second shape was
+declared supported and never instantiated, which is exactly how a 2.1x
+regression survived in it. The gate now carries DSv4-Flash rows.
+
+Verified on the default selector path after rebuilding `_C.so`, not through an
+env override: DSv4-Flash M=384 1938 -> 883 us and M=512 1941 -> 876; MiMo M=384
+2165 -> 1449 and M=512 2194 -> 1835. Against FP8, +116/+115/+47/+19 % became
+-2.2/-4.2/-2.9/-3.3 %.
+
+**A third process failure, caught only because that re-measurement was run.**
+The selector lives in host code inside `_C.so`. The first "after" numbers were
+taken with the fix committed, the compile gate green, and the extension *not
+rebuilt* -- so they showed no change at all. `tests/compile_all_megamoe_kernels.sh`
+instantiates device templates; it is structurally incapable of testing a host
+heuristic. Every selector change in this document was gated by something that
+could not have caught a selector bug. **Changes to
+`csrc/jit_kernels/heuristics/` need a default-path benchmark, not the gate.**
+
+The generalisable rule: **a tuning bound that is not derived from the shape is a
+latent bug in any kernel whose shape is a template parameter.** Every other
+bound in the selector derives from `experts / (ranks * topk)`; the one that did
+not is the one that broke, and it broke both models rather than only the
+untuned one.
+
+---
+
+### 9.15 Ruled out: BLOCK_M 32 for the swapAB tile
+
+9.13 proposed BM32 for the band where tokens per expert pass 24 and experts
+spill into a second m-block. On DeepSeek-V4-Flash / EP4 that band is M = 193..256
+and MXFP4 loses 5-7 % to FP8 there, while the wide BN256 tile is 21-45 % worse
+(so the tier bound is correctly placed -- forcing BN256 at M=160 costs 45 %).
+
+BM32 **deadlocks**. Enabling it needs four separate guards opened:
+
+| guard | where |
+|:--|:--|
+| `BLOCK_M == 8/16/24/64/128` | kernel `DG_STATIC_ASSERT` |
+| `!kSwapABRequested \|\| BLOCK_M <= 24` | kernel `DG_STATIC_ASSERT` |
+| `config.block_m == 8/16/24/64/128` | host `DG_HOST_ASSERT` |
+| `plan.swap_ab ? block_m <= 24 : ...` | host `DG_HOST_ASSERT` |
+
+With all four open it compiles at **96 registers, zero spill**, passes a 19-row
+compile gate, and then hangs on hardware -- NCCL watchdog timeout at 600 s,
+M=224, EP4. So `BLOCK_M <= 24` on the swapAB path is a real invariant, enforced
+redundantly, and at least one of those guards protects something no
+`static_assert` expresses. The comment on the fourth ("the reference NVFP4
+selector packs into a larger batch above M=64") reads like an inherited policy;
+it is not. Reverted.
+
+**Third static-check false positive this session.** Register over-subscription
+compiled and hung (9.9); the compile gate could not see a host selector bug
+(9.14); BM32 passed every static check and deadlocked. On this kernel, a clean
+compile plus a green gate is weak evidence -- only a default-path run on
+hardware settles anything.
+
+The +5-7 % at M=256 on DeepSeek-V4-Flash therefore **remains unexplained**. It is
+not the tier bound, and not reachable with a 32-wide tile; it coincides exactly
+with tokens per expert crossing 24. Any fix is deeper than tile selection.
+
+---
+
+### 9.16 The residual, localised: tokens per expert crossing 24
+
+The 5-7 % at M=256 on DeepSeek-V4-Flash / EP4 (9.15) is not isolated. At EP8 the
+same shape loses at **M=128**, and three runs at `--num-tests 30 --reps 5` show
+it is real where a neighbouring point is not:
+
+| M | run 1 | run 2 | run 3 | verdict |
+|---:|---:|---:|---:|:--|
+| 8 | -21.2 % | -0.1 % | +11.3 % | **noise** -- 32-point spread |
+| 32 | -5.0 % | +0.6 % | -1.0 % | noise |
+| 128 | **+9.1 %** | **+5.2 %** | **+6.9 %** | **real** |
+| 256 | -1.8 % | -1.7 % | +1.5 % | noise |
+
+A single run of this sweep had read M=8 as a +9.7 % regression and M=128 as
++3.5 %. The first was noise and the second understated. **At EP8 nothing below
+about 10 % is a finding without repeats** -- the floor recorded in 9.7 was
+measured and then ignored in practice.
+
+**The mechanism is the same at both EP widths.** `experts / (ranks * topk)`
+halves from EP4 to EP8, so the point where tokens per expert crosses 24 moves
+from M~256 to M~128. There BM24 must spill the busiest experts into a second
+m-block. It is still the best tile available -- BM16 costs +22 %, BM8 +77 %, the
+wide BN256 tile +21-45 % -- so this is not a mis-set bound.
+
+The right-sized tile is BM32. **9.15 was wrong to call its deadlock a real
+invariant** -- see 9.17. It is now enabled and the spike is gone.
+
+**The tier bound is not the problem, and a same-M test is what settles it.**
+Mapping M = 80..160 shows M=144 running 7 % *faster* than M=128 despite more
+tokens per expert, which looks like a refutation -- but 128 and 144 run
+*different plans* (swapAB and wide BN256), so that comparison crosses a plan
+boundary and tests nothing. Forcing the wide tile at the same M is the clean
+test, and it is worse at every point: M=96 +27 %, M=112 +14 %, M=128 +3.6 %.
+BM24 is the best available tile at M=128 (461 us, against wide 478, BM16 558,
+BM8 813). The boundary sits where it should.
+
+Pooling every EP8 measurement of M=128 taken today: **+3.5, +9.1, +5.2, +6.9,
++10.3, +9.5, +3.5 %** -- positive 7 of 7, mean ~+6.9 %. The sign is solid even
+where the magnitude is not, which is the standard this shape's noise demands.
+
+---
+
+### 9.17 BM32, and why it appeared to be forbidden
+
+9.15 concluded that `BLOCK_M <= 24` on the swapAB path is "a real invariant,
+enforced redundantly". That was wrong, and the way it was wrong is the useful
+part.
+
+**Defect 1 -- a missing arm in the N_SWAP dispatch ladder.** Both mainloops
+select the WGMMA width with
+
+    if constexpr (BLOCK_M == 8)       { ...<8>(); }
+    else if constexpr (BLOCK_M == 16) { ... }
+    else if constexpr (BLOCK_M == 24) { ... }
+
+and there was no `== 32` arm. Being `if constexpr`, a BM32 kernel **compiles
+perfectly with an empty mainloop**: no WGMMA, and -- fatally --
+`arrive_empty_barrier(stage_idx)` lives inside that lambda, so no stage is ever
+released and the loader blocks forever. That is the 600 s hang. Four guards had
+accumulated around the hole; the comment on one of them, dismissed in 9.15 as
+stale policy, was closer to right than the correction.
+
+An `if constexpr` ladder with no trailing `else` turns an unhandled case into a
+silent empty body, which in a warp-specialised kernel is a deadlock rather than
+a build error. A trailing `DG_STATIC_ASSERT` now closes it.
+
+**Defect 2 -- the fallback returned the narrowest tile.** Past every derated
+bound `swap_ab_block_m` returned 24. That was correct while the candidates were
+`{8, 24}`, and became a bug the moment 32 joined them: at M=128 / EP8 on
+DeepSeek-V4-Flash, BM32's derated bound is 127, the batch misses it by one, and
+the fallback handed back a *narrower* tile than the one available. Past all
+bounds the widest tile is the least bad -- it spills the busiest experts into
+the fewest extra m-blocks.
+
+**Result at the spike** (EP8, DeepSeek-V4-Flash, two runs each):
+
+| M | before | after |
+|---:|---:|---:|
+| 112 | -4.3 / -5.5 % | **-14.3 / -15.4 %** |
+| 128 | **+10.5 / +7.2 %** | **-22.6 / -16.8 %** |
+| 144 | -5.6 / -5.3 % | -1.9 / -4.6 % |
+| 160 | -3.9 / -3.1 % | -5.7 / -6.5 % |
+
+M=128 absolute: 467/479 us -> 362/361, a 24 % cut, with no neighbour regressed.
+Correctness 8/8 on DSv4 EP8, DSv4 EP4 and MiMo EP4, cosine_min unchanged.
+
+**Three mechanisms were proposed and refuted before this one**: tokens crossing
+24 into a second m-block (refuted by a same-M control -- the wide tile is worse
+at M=128), the tier bound being one step late (same control), and BM32 being
+structurally forbidden (refuted by reading the ladder). Each was plausible; only
+the same-M measurement and the source settled it.
+
+---
+
+### 9.18 Final state, both shapes, both EP widths
+
+All figures MXFP4 versus FP8 on the fused MegaMoE, H20-3e, 78 SMs, after e2c99d4
+(tier bound) and 3287cfb (BM32 + fallback). Negative is MXFP4 faster.
+
+| M | DSv4-Flash EP4 | DSv4-Flash EP8 | MiMo EP4 |
+|---:|---:|---:|---:|
+| 8 | -2.1 % | noise (+/-10 %) | |
+| 32 | +1.4 % | -1.0 % | |
+| 64 | +3.4 % | | -9.4 % |
+| 96 | | -6.2 / -11.7 % | -15.4 % |
+| 112 | | -14.3 / -15.4 % | |
+| 128 | -7.8 % | **-22.6 / -16.8 %** | **-30.5 %** |
+| 160 | | -5.7 / -6.5 % | -1.9 % |
+| 192 | -11.6 % | | -2.4 % |
+| 256 | **-15.7 %** | | -3.1 % |
+| 384 | -4.1 % | | -2.9 % |
+| 512 | -3.5 % | | -3.3 % |
+| 768 | -0.3 % | | -1.0 % |
+
+**What the two fixes were worth.** The tier bound took M >= 384 from +22..+116 %
+to roughly parity on both shapes. BM32 took the boundary spikes from +5..+10 %
+to -16..-30 %: at EP4 the derated bounds are BM8 64, BM24 192, BM32 256, so
+BM32 covers M = 193..256 -- exactly the band that measured +5-7 % and was
+recorded in 9.16 as unexplained. At EP8 the same bounds halve and it covers
+M = 97..127 plus the fallback at 128.
+
+Only M=32 and M=64 at EP4 remain marginally positive (+1.4 / +3.4 %), inside
+this shape's run-to-run spread; earlier runs of the same points read -1.9 and
+-3.4 %.
+
+**Scope of the earlier SOL claims.** Sections 9.7-9.13 measured M <= 256 on MiMo
+only and are not a statement about either shape at larger batches, nor about
+DeepSeek-V4-Flash at all. The two defects above were live throughout that work
+and cost MiMo 22-49 % at M = 384..768 and 17 % at M = 128 while it was being
+reported as a win.
+
+---
+
+### 9.19 The decode loop in SASS, and what it says the ceiling is
+
+Disassembling the DSv4-Flash BM32 swapAB+split instantiation isolates the decode
+loop at 199 instructions per 128 output bytes per thread. Five candidates came
+out of reading it; four were already optimal and are recorded here so they do
+not get retried:
+
+* The eight swizzled shared-memory store addresses are **hoisted out of the
+  loop** by ptxas -- `IADD3 Rx, Rbase, URn, R{35,34,33,32,7,6,5,3}`, one add per
+  store. Strength-reducing the XOR swizzle to an incremental chain saves nothing.
+* The four packed-FP4 loads already use immediate offsets off one base
+  (`[R30]`, `[R30+0x800]`, `[R30+0x1000]`, `[R30+0x1800]`).
+* The dequant core is **7 instructions per 8 output bytes and irreducible**: the
+  `& 0x77777777` selector mask is forced because a PRMT selector nibble with
+  bit 3 set means sign-replication, and PRMT can only address 8 source bytes, so
+  the sign has to be OR'd back separately.
+* `IMAD.SHL.U32 Rd, Ra, 0x10` is a multiply by sixteen, i.e. the `packed << 4`
+  of the sign path -- not a second shift.
+
+The one real target was the scaled LUT being a 32-entry *window*: legal only
+with a clamped index, which cost two `VIMNMX` and a subtract per lookup, twelve
+instructions per iteration over four slices. Storing all 256 entries costs 1 KB
+more shared memory and none of that arithmetic -- 199 -> 188 instructions at 96
+registers, scale indexing down to a shift and a mask with the times-eight folded
+into the shift.
+
+**The MegaMoE harness cannot measure a change that size.** Paired runs of the
+*same* binary drift 0.3-6.2 points (M=8 read -4.64 % and -10.85 %). The decode
+microbenchmark can: three runs each, no spread, dequant ALU 2.91 -> 3.00 TB/s and
+the shared-memory decode 2.39 -> 2.43 TB/s. That benchmark serialises decode
+behind the load, so it over-weights ALU savings -- see 9.21. For sub-2 % dequant work that is the
+only instrument; the end-to-end number is ~1 point and stays inside the drift.
+
+### 9.20 The tile bound was one step too late, and the model for why is wrong
+
+An expert that overflows its tile is expensive out of proportion to the tokens
+that spilled: work is decomposed `num_m_blocks * num_n_blocks` per expert, so the
+second m-block re-streams and re-decodes the whole weight slice, and the decode
+is the throttle. Padding an under-filled tile costs nothing against that, because
+the N_SWAP ladder picks the WGMMA width from `valid_m` -- a BM32 tile holding 18
+tokens issues exactly the wgmma a BM24 tile would.
+
+BM24 against BM32 at the same M, two runs per point:
+
+| config | M | lambda | BM24 | BM32 |
+|---|---:|---:|---:|---:|
+| DSv4 EP4 | 192 | 18.8 | -9.9 % | **-14.1 %** |
+| DSv4 EP4 | 256 | 24.5 | +2.8 % | **-15.8 %** |
+| DSv4 EP8 | 96 | 17.7 | -8.1 % | **-13.0 %** |
+| DSv4 EP8 | 128 | 23.9 | +9.4 % | **-11.9 %** |
+| MiMo EP4 | 240 | 19.8 | -26.8 % | **-33.6 %** |
+
+The cliff tracks lambda, not M or shape: BM24 collapses once lambda passes ~18-20.
+The old bound sat at exactly `lambda/block_m = 0.75`, on the edge, and both DSv4
+configurations sat *at* their bound and already lost. Seven tenths clears it and
+moves three points and nothing else -- DSv4 EP4 M=192 -9.9 -> -13.1 %, DSv4 EP8
+M=96 -8.1 -> -11.4 %, MiMo EP4 M=216 -32.7 -> -35.3 %.
+
+**The headroom stays a constant fraction, and that was measured rather than
+assumed.** Routing spread looks like it should scale as sqrt(lambda), which would
+give narrow tiles proportionally more headroom. It does not: sizing for
+`lambda + 2.5 sqrt(lambda)` cuts BM8 to 36 tokens on DSv4 EP4, where BM8 still
+wins by 9-10 % out to M=48 and does not cross over until M=64. MoE routing
+imbalance is learned and correlated, so its spread tracks the mean, not its root.
+
+### 9.21 Why DSv4-Flash does not reach 30 %, and MiMo does
+
+DSv4 EP4 after the above, H20-3e, two runs, negative is MXFP4 faster:
+
+| M | 8 | 32 | 64 | 128 | 160 | 192 | 256 | 384 | 768 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| | -9.4 | -5.1 | -1.6 | -9.5 | -13.1 | **-17.1** | **-17.6** | -4.0 | -0.9 |
+
+Converted to achieved weight-stream bandwidth (weights are 25.17 MB/expert in
+FP8, 13.37 MB in MXFP4 including scales), end to end, no model:
+
+| | FP8 | MXFP4 | MXFP4 / FP8 |
+|---|---:|---:|---:|
+| M=128 | 2.77 TB/s | 1.62 TB/s | 58 % |
+| M=192 | 2.32 | 1.49 | 64 % |
+| M=256 | 2.15 | 1.38 | 64 % |
+
+MXFP4 moves **53.1 %** of the bytes at **58-64 %** of the rate, which is the
+-9 to -18 % that the table shows. To reach -30 % it would have to run at
+`0.531 / 0.70` = **76 %** of FP8's rate, i.e. a further 19-33 % of effective
+weight-stream throughput.
+
+That headroom is not there. Section 9.13's warp-specialised measurement puts the
+kernel at **91-99 % of achievable** already, and the binding resource there is
+**shared-memory bandwidth, not the dequant ALU**: the SS path moves ~100 KB of
+smem per stage (TMA write, decode read, decode write, WGMMA read) for 17 KB of
+HBM, 5.75x amplification. So the remaining headroom is single-digit percent,
+against the 19-33 % that -30 % needs.
+
+This also explains why 9.19's instruction saving does not show up end to end.
+`bench_sm90_decode_consumer.cu` issues the next bulk copy only after the decode
+returns -- decode and load **serialised** -- so it over-weights ALU savings and
+reports +1.7 %. The kernel overlaps them and is limited by smem bandwidth, where
+removing ALU instructions buys almost nothing. The change is still right (fewer
+instructions, same numbers, 1 KB), but its end-to-end value is ~1 point and the
+mechanism is not the one the microbenchmark prices. **Do not quote
+`bench_sm90_decode_consumer.cu` as a ceiling** -- use
+`bench_sm90_warp_specialised_decode.cu`, which reproduces the warp
+specialisation.
+
+**MiMo's -34 % is an FP8 regression, not an MXFP4 win.** Across M=192..288 MXFP4
+is flat (1214 -> 1215 -> 1310 us) while FP8 jumps 1389 -> 1849 us at M=240 and
+plateaus: FP8 hits its own tile cliff there. Real as a ratio, but DSv4's FP8 has
+no equivalent cliff in range (693 -> 707 -> 750 -> 893, smooth), and that is the
+entire difference between the two shapes. Any "MXFP4 is 30 % faster" claim needs
+the baseline's own curve quoted next to it.
+
+---
+
 ## 10. Reproducing
 
 The weight-load measurement in section 7.2 needs no allocation at all — it is
